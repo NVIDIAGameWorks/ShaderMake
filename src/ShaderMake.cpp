@@ -38,9 +38,11 @@ THE SOFTWARE.
 #include <cstdarg>
 
 #ifdef _WIN32
-    #include "ComPtr.h"
     #include <d3dcompiler.h> // FXC
     #include <dxcapi.h> // DXC
+
+    #include <wrl/client.h>
+    using Microsoft::WRL::ComPtr;
 #else
     #include <unistd.h>
     #include <limits.h>
@@ -1032,7 +1034,7 @@ void DxcCompile()
             dxcUtils->CreateDefaultIncludeHandler(&pDefaultIncludeHandler);
 
             ComPtr<IDxcResult> dxcResult;
-            hr = dxcCompiler->Compile(&sourceBuffer, argPointers.data(), (uint32_t)args.size(), pDefaultIncludeHandler, IID_PPV_ARGS(&dxcResult));
+            hr = dxcCompiler->Compile(&sourceBuffer, argPointers.data(), (uint32_t)args.size(), pDefaultIncludeHandler.Get(), IID_PPV_ARGS(&dxcResult));
 
             if (SUCCEEDED(hr))
                 dxcResult->GetStatus(&hr);
