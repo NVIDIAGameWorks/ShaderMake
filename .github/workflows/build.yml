@@ -1,0 +1,61 @@
+name: Build
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+env:
+  BUILD_TYPE: Release
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+
+    steps:
+    - name: Setup variables
+      uses: actions/github-script@v6
+      with:
+        script: core.exportVariable('GITHUB_SHA_SHORT', context.sha.substring(0, 7))
+
+    - name: Checkout repository
+      uses: actions/checkout@v3
+      
+    - name: Configure
+      run: cmake -B ${{github.workspace}}/build "-DCMAKE_SYSTEM_VERSION=10.0.22621.0" -A x64
+
+    - name: Build
+      run: cmake --build ${{github.workspace}}/build --config ${{env.BUILD_TYPE}}
+
+    - name: Upload
+      uses: actions/upload-artifact@v3
+      with:
+        name: ShaderMake-windows-${{env.GITHUB_SHA_SHORT}}
+        path: |
+           ${{github.workspace}}/bin/${{env.BUILD_TYPE}}/ShaderMake.exe
+
+  build-linux-x64:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Setup variables
+      uses: actions/github-script@v6
+      with:
+        script: core.exportVariable('GITHUB_SHA_SHORT', context.sha.substring(0, 7))
+
+    - name: Checkout repository
+      uses: actions/checkout@v3
+      
+    - name: Configure
+      run: cmake -B ${{github.workspace}}/build -DCMAKE_BUILD_TYPE=${{env.BUILD_TYPE}}
+
+    - name: Build
+      run: cmake --build ${{github.workspace}}/build -j2
+
+    - name: Upload
+      uses: actions/upload-artifact@v3
+      with:
+        name: ShaderMake-linux-x64-${{env.GITHUB_SHA_SHORT}}
+        path: |
+           ${{github.workspace}}/bin/${{env.BUILD_TYPE}}/ShaderMake
