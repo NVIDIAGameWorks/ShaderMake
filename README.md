@@ -6,8 +6,8 @@ ShaderMake is a frond-end tool for batch multi-threaded shader compilation devel
 
 Features:
 
-- Generates DXBC, DXIL and SPIRV code.
-- Outputs results in 3 formats: native binary, header file, and a binary blob containing all permutations for a given shader.
+- Generates DXBC, DXIL and SPIR-V code.
+- Outputs results in 3 formats: native binary, header file, and a [binary blob](#user-content-shader-blob-api) containing all permutations for a given shader.
 - Minimizes the number of re-compilation tasks by tracking file modification times and include trees.
 
 During project deployment, the *CMake* script automatically searches for `fxc` and `dxc` and sets these variables:
@@ -101,3 +101,13 @@ Additionally, the config file parser supports:
 - `#if 1` and `#if 0`
 - `#else`
 - `#endif`
+
+## Shader blob API
+
+When the `--blob` command line argument is specified, ShaderMake will package multiple permutations for the same shader into a single "blob" file. These files use a custom format that is somewhat similar to regular TAR. 
+
+ShaderMake provides a small library with parsing functions to use these blob files in applications. This library can be statically linked with an application by including ShaderMake as a git submodule and linking the `ShaderMakeBlob` target to your application:
+
+    target_link_libraries(my_target PRIVATE ShaderMakeBlob)
+
+Then include `<ShaderMake/ShaderBlob.h>` and use the `ShaderMake::FindPermutationInBlob` to locate a specific shader version in a blob. If that is unsuccessful, the `ShaderMake::EnumeratePermutationsInBlob` and/or `ShaderMake::FormatShaderNotFoundMessage` functions can help you provide a helpful error message to the user.
