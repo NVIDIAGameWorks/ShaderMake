@@ -40,15 +40,20 @@ else ()
 endif ()
 
 # Library with blob read and write functions for use by client projects
-add_library (ShaderMakeBlob STATIC "src/ShaderBlob.cpp" "include/ShaderMake/ShaderBlob.h")
+add_library (ShaderMakeBlob STATIC
+    include/ShaderMake/ShaderBlob.h
+    src/ShaderBlob.cpp
+)
 target_include_directories (ShaderMakeBlob PUBLIC "include")
+target_compile_options (ShaderMakeBlob PRIVATE ${COMPILE_OPTIONS})
 set_property (TARGET ShaderMakeBlob PROPERTY FOLDER ShaderMake)
 
 # ShaderMake executable
-file (GLOB GLOB_SOURCE "src/*.cpp" "src/*.c" "src/*.h" "include/ShaderMake/*.h")
-source_group ("Source" FILES ${GLOB_SOURCE})
-
-add_executable (ShaderMake ${GLOB_SOURCE})
+add_executable (ShaderMake
+    src/argparse.c
+    src/argparse.h
+    src/ShaderMake.cpp 
+)
 target_compile_options (ShaderMake PRIVATE ${COMPILE_OPTIONS})
 set_target_properties (ShaderMake PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${SHADERMAKE_BIN_OUTPUT_PATH}/$<CONFIG>")
 set_property (DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR} PROPERTY VS_STARTUP_PROJECT ShaderMake)
