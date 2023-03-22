@@ -25,6 +25,9 @@
 #include <vector>
 #include <string>
 
+namespace ShaderMake
+{
+
 struct ShaderConstant
 {
     const char* name;
@@ -58,3 +61,16 @@ std::string FormatShaderNotFoundMessage(
     const ShaderConstant* constants,
     uint32_t numConstants
 );
+
+bool WriteFileHeader(
+	FILE* file
+);
+
+bool WritePermutation(
+	FILE* file,
+	const std::string& permutationKey,
+	const void* binary,
+	size_t binarySize
+);
+
+} // namespace ShaderMake

@@ -1471,15 +1471,18 @@ bool CreateBlob(const string& finalOutputFileName, const vector<BlobEntry>& entr
     FILE* outputStream = fopen(finalOutputFileName.c_str(), "wb");
     if (!outputStream)
     {
-        Printf(RED "ERROR: Can't open compiler-generated file '%s'!\n" WHITE, finalOutputFileName.c_str());
+        Printf(RED "ERROR: Can't open output file '%s'!\n" WHITE, finalOutputFileName.c_str());
 
         return false;
     }
 
     // Write "blob" header
-    extern const char* g_BlobSignature;
-    extern size_t g_BlobSignatureSize;
-    fwrite(g_BlobSignature, 1, g_BlobSignatureSize, outputStream);
+    if (!ShaderMake::WriteFileHeader(outputStream))
+    {
+        Printf(RED "ERROR: Failed to write into output file '%s'!\n" WHITE, finalOutputFileName.c_str());
+
+        return false;
+    }
 
     bool success = true;
 
@@ -1515,13 +1518,11 @@ bool CreateBlob(const string& finalOutputFileName, const vector<BlobEntry>& entr
             size_t bytesRead = fread(buffer, 1, fileSize, inputStream);
             if (bytesRead == fileSize)
             {
-                ShaderBlobEntry binaryEntry;
-                binaryEntry.permutationSize = (uint32_t)entry.permutation.size();
-                binaryEntry.dataSize = (uint32_t)fileSize;
-
-                fwrite(&binaryEntry, 1, sizeof(binaryEntry), outputStream);
-                fwrite(entry.permutation.data(), 1, entry.permutation.size(), outputStream);
-                fwrite(buffer, 1, fileSize, outputStream);
+                if (!ShaderMake::WritePermutation(outputStream, entry.permutation, buffer, fileSize))
+                {
+                    Printf(YELLOW "ERROR: Failed to write a shader permutation into '%s'!\n", finalOutputFileName.c_str());
+                    success = false;
+                }
             }
             else
             {
@@ -1538,11 +1539,14 @@ bool CreateBlob(const string& finalOutputFileName, const vector<BlobEntry>& entr
         }
         else
         {
-            Printf(YELLOW "WARNING: Binary file '%s' is empty!\n" WHITE, file.c_str());
+            Printf(YELLOW "ERROR: Binary file '%s' is empty!\n" WHITE, file.c_str());
             success = false;
         }
 
         fclose(inputStream);
+
+        if (!success)
+            break;
 
         if (!g_Options.isBinaryNeeded)
             fs::remove(file);

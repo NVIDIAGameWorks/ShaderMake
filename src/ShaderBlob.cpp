@@ -25,8 +25,11 @@
 #include <sstream>
 #include <cstring>
 
-const char* g_BlobSignature = "NVSP";
-size_t g_BlobSignatureSize = 4;
+namespace ShaderMake
+{
+
+static const char* g_BlobSignature = "NVSP";
+static size_t g_BlobSignatureSize = 4;
 
 bool FindPermutationInBlob(const void* blob, size_t blobSize, const ShaderConstant* constants, uint32_t numConstants, const void** pBinary, size_t* pSize)
 {
@@ -164,3 +167,24 @@ std::string FormatShaderNotFoundMessage(const void* blob, size_t blobSize, const
 
     return ss.str();
 }
+
+bool WriteFileHeader(FILE* file)
+{
+    const size_t written = fwrite(g_BlobSignature, g_BlobSignatureSize, 1, file);
+    return written == 1;
+}
+
+bool WritePermutation(FILE* file, const std::string& permutationKey, const void* binary, size_t binarySize)
+{
+    ShaderBlobEntry binaryEntry{};
+    binaryEntry.permutationSize = (uint32_t)permutationKey.size();
+    binaryEntry.dataSize = (uint32_t)binarySize;
+
+    size_t written = 0;
+    written += fwrite(&binaryEntry, sizeof(binaryEntry), 1, file);
+    written += fwrite(permutationKey.data(), binaryEntry.permutationSize, 1, file);
+    written += fwrite(binary, binarySize, 1, file);
+    return written == 3;
+}
+
+} // namespace ShaderMake
