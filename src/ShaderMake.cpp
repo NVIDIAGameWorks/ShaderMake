@@ -108,11 +108,7 @@ struct Options
     bool matrixRowMajor = false;
     bool verbose = false;
     bool colorize = false;
-#ifdef _WIN32
-    bool useExe = false;
-#else
-    const bool useExe = true;
-#endif
+    bool useAPI = false;
 
     bool Parse(int32_t argc, const char** argv);
 };
@@ -512,9 +508,7 @@ bool Options::Parse(int32_t argc, const char** argv)
             OPT_BOOLEAN(0, "serial", &serial, "Disable multi-threading", nullptr, 0, 0),
             OPT_BOOLEAN(0, "flatten", &flatten, "Flatten source directory structure in the output directory", nullptr, 0, 0),
             OPT_BOOLEAN(0, "continue", &continueOnError, "Continue compilation if an error is occured", nullptr, 0, 0),
-#ifdef _WIN32
-            OPT_BOOLEAN(0, "useExe", &useExe, "Use FXC/DXC executables explicitly", nullptr, 0, 0),
-#endif
+            OPT_BOOLEAN(0, "useAPI", &useAPI, "Use FXC (d3dcompiler) or DXC (dxcompiler) API explicitly (Windows only)", nullptr, 0, 0),
             OPT_BOOLEAN(0, "colorize", &colorize, "Colorize console output", nullptr, 0, 0),
             OPT_BOOLEAN(0, "verbose", &verbose, "Print commands before they are executed", nullptr, 0, 0),
         OPT_GROUP("SPIRV options:"),
@@ -526,6 +520,10 @@ bool Options::Parse(int32_t argc, const char** argv)
             OPT_INTEGER(0, "uRegShift", &uRegShift, "SPIRV: register shift for UAV (u#) resources", nullptr, 0, 0),
         OPT_END(),
     };
+
+#ifndef _WIN32
+    useAPI = false;
+#endif
 
     static const char* usages[] = {
         "ShaderMake.exe -p {DXBC|DXIL|SPIRV} --binary [--header --blob] -c \"path/to/config\"\n"
@@ -569,13 +567,13 @@ bool Options::Parse(int32_t argc, const char** argv)
         return false;
     }
 
-    if (useExe && !compiler)
+    if (!useAPI && !compiler)
     {
         Printf(RED "ERROR: Compiler not specified!\n");
         return false;
     }
 
-    if (useExe && !fs::exists(compiler))
+    if (!useAPI && !fs::exists(compiler))
     {
         Printf(RED "ERROR: Compiler '%s' does not exist!\n", compiler);
         return false;
@@ -1583,7 +1581,7 @@ int32_t main(int32_t argc, const char** argv)
 
     // Set envvar
     char envBuf[1024];
-    if (g_Options.useExe)
+    if (!g_Options.useAPI)
     {
         #ifdef _WIN32 // workaround for Windows
             snprintf(envBuf, sizeof(envBuf), "COMPILER=\"%s\"", g_Options.compiler);
@@ -1678,7 +1676,7 @@ int32_t main(int32_t argc, const char** argv)
         vector<thread> threads(threadsNum);
         for (uint32_t i = 0; i < threadsNum; i++)
         {
-            if (g_Options.useExe)
+            if (!g_Options.useAPI)
                 threads[i] = thread(ExeCompile);
 #ifdef WIN32
             else if (g_Options.platform == DXBC)
