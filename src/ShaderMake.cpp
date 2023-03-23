@@ -639,13 +639,13 @@ bool ConfigLine::Parse(int32_t argc, const char** argv)
         OPT_STRING('T', "profile", &profile, "Shader profile", nullptr, 0, 0),
         OPT_STRING('E', "entryPoint", &entryPoint, "(Optional) entry point", nullptr, 0, 0),
         OPT_STRING('D', "define", &unused, "(Optional) define(s) in forms 'M=value' or 'M'", AddLocalDefine, (intptr_t)this, 0),
-        OPT_STRING('o', "output", &outputDir, "(Optional) output directory override", nullptr, 0, 0),
+        OPT_STRING('o', "output", &outputDir, "(Optional) output subdirectory", nullptr, 0, 0),
         OPT_INTEGER('O', "optimization", &optimizationLevel, "(Optional) optimization level", nullptr, 0, 0),
         OPT_END(),
     };
 
     static const char* usages[] = {
-        "path/to/shader -T profile [-E entry -O{0|1|2|3} -o \"path/to/output\" -D DEF1={0,1} -D DEF2={0,1,2} -D DEF3 ...]",
+        "path/to/shader -T profile [-E entry -O{0|1|2|3} -o \"output/subdirectory\" -D DEF1={0,1} -D DEF2={0,1,2} -D DEF3 ...]",
         nullptr
     };
 
@@ -1346,7 +1346,7 @@ bool ProcessConfigLine(uint32_t lineIndex, const string& line, const fs::file_ti
     // Compiled shader name
     fs::path compiledName = RemoveLeadingDotDots(configLine.source);
     compiledName.replace_extension("");
-    if (g_Options.flatten)
+    if (g_Options.flatten || configLine.outputDir) // Specifying -o <path> for a shader removes the original path
         compiledName = compiledName.filename();
     if (strcmp(configLine.entryPoint, "main"))
         compiledName += "_" + string(configLine.entryPoint);
@@ -1364,7 +1364,10 @@ bool ProcessConfigLine(uint32_t lineIndex, const string& line, const fs::file_ti
     }
 
     // Output directory
-    fs::path destDir = configLine.outputDir ? configLine.outputDir : g_Options.outputDir;
+    fs::path destDir = g_Options.outputDir;
+    // Apply the -o <path> per-shader option as a subdirectory in the main output dir
+    if (configLine.outputDir)
+        destDir /= configLine.outputDir;
 
     // Create intermediate output directories
     bool force = g_Options.force;

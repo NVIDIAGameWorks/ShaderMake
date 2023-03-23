@@ -75,7 +75,7 @@ SPIRV options:
 A config file consists of several lines, where each line has the following structure:
 
 ```
-path/to/shader -T profile [-O3 -o "path/to/output" -E entry -D DEF1={0,1} -D DEF2={0,1,2} -D DEF3]
+path/to/shader -T profile [-O3 -o "output/subdirectory" -E entry -D DEF1={0,1} -D DEF2={0,1,2} -D DEF3]
 ```
 
 where:
