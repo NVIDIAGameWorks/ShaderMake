@@ -1116,19 +1116,19 @@ void ExeCompile()
 
             // Source file
             fs::path sourceFile = g_Options.configFile.parent_path() / g_Options.sourceDir / taskData.source;
-            cmd << sourceFile.string().c_str();
+            cmd << "\"" << sourceFile.string().c_str() << "\"";
 
             // Output file
             string outputFile = taskData.outputFileWithoutExt + g_OutputExt;
             if (g_Options.isBinaryNeeded || g_Options.isBlobNeeded)
-                cmd << " -Fo " << outputFile;
+                cmd << " -Fo " << "\"" << outputFile << "\"";
             if (g_Options.isHeaderNeeded)
             {
                 fs::path path = taskData.outputFileWithoutExt;
                 string name = path.filename().string();
                 replace(name.begin(), name.end(), '.', '_');
 
-                cmd << " -Fh " << outputFile << ".h";
+                cmd << " -Fh " << "\"" << outputFile << ".h" << "\"";
                 cmd << " -Vn g_" << name << "_" << g_PlatformExts[g_Options.platform] + 1;
             }
 
@@ -1152,7 +1152,7 @@ void ExeCompile()
 
             // Include directories
             for (const fs::path& dir : g_Options.includeDirs)
-                cmd << " -I " << dir.string().c_str();
+                cmd << " -I " << "\"" << dir.string().c_str() << "\"";
 
             // Args
             cmd << optimizationLevelRemap[taskData.optimizationLevel];
@@ -1196,7 +1196,7 @@ void ExeCompile()
                     cmd << " -Qstrip_reflect";
 
                 if (g_Options.pdb)
-                    cmd << " -Fd " << fs::path(outputFile).parent_path().string() << "/" PDB_DIR "/"; // only binary code affects hash
+                    cmd << " -Fd " << "\"" << fs::path(outputFile).parent_path().string() << "/" PDB_DIR "/" << "\""; // only binary code affects hash
             }
         }
 
