@@ -36,6 +36,7 @@ THE SOFTWARE.
 #include <cstdio>
 #include <csignal>
 #include <cstdarg>
+#include <cstring>
 
 #ifdef _WIN32
     #include <d3dcompiler.h> // FXC
