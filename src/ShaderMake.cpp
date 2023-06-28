@@ -226,6 +226,14 @@ inline bool IsSpace(char ch)
 inline bool HasRepeatingSpace(char a, char b)
 { return (a == b) && a == ' '; }
 
+inline string EscapePath(const string& s)
+{
+    if (s.find(' ') != string::npos)
+        return "\"" + s + "\"";
+
+    return s;
+}
+
 inline void TrimConfigLine(string& s)
 {
     // Remove leading whitespace
@@ -1117,19 +1125,19 @@ void ExeCompile()
 
             // Source file
             fs::path sourceFile = g_Options.configFile.parent_path() / g_Options.sourceDir / taskData.source;
-            cmd << sourceFile.string().c_str();
+            cmd << EscapePath(sourceFile.string());
 
             // Output file
             string outputFile = taskData.outputFileWithoutExt + g_OutputExt;
             if (g_Options.isBinaryNeeded || g_Options.isBlobNeeded)
-                cmd << " -Fo " << outputFile;
+                cmd << " -Fo " << EscapePath(outputFile);
             if (g_Options.isHeaderNeeded)
             {
                 fs::path path = taskData.outputFileWithoutExt;
                 string name = path.filename().string();
                 replace(name.begin(), name.end(), '.', '_');
 
-                cmd << " -Fh " << outputFile << ".h";
+                cmd << " -Fh " << EscapePath(outputFile) << ".h";
                 cmd << " -Vn g_" << name << "_" << g_PlatformExts[g_Options.platform] + 1;
             }
 
@@ -1153,7 +1161,7 @@ void ExeCompile()
 
             // Include directories
             for (const fs::path& dir : g_Options.includeDirs)
-                cmd << " -I " << dir.string().c_str();
+                cmd << " -I " << EscapePath(dir.string());
 
             // Args
             cmd << optimizationLevelRemap[taskData.optimizationLevel];
@@ -1197,7 +1205,10 @@ void ExeCompile()
                     cmd << " -Qstrip_reflect";
 
                 if (g_Options.pdb)
-                    cmd << " -Fd " << fs::path(outputFile).parent_path().string() << "/" PDB_DIR "/"; // only binary code affects hash
+                {
+                    fs::path pdbPath = fs::path(outputFile).parent_path() / PDB_DIR;
+                    cmd << " -Fd " << EscapePath(pdbPath.string() + "/"); // only binary code affects hash
+                }
             }
         }
 
