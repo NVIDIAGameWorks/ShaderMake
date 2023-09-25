@@ -45,6 +45,7 @@ Compiler settings:
 - `--PDB` - Output PDB files in `out/PDB/` folder
 - `--stripReflection` - Maps to `-Qstrip_reflect` DXC/FXC option: strip reflection information from a shader binary
 - `--matrixRowMajor` - Maps to `-Zpr` DXC/FXC option: pack matrices in row-major order
+- `--hlsl2021` - Maps to `-HV 2021` DXC option: enable HLSL 2021 standard
 
 Defines & include directories:
 - `-I, --include=<str>` - Include directory(s)
@@ -104,7 +105,7 @@ Additionally, the config file parser supports:
 
 ## Shader blob API
 
-When the `--blob` command line argument is specified, ShaderMake will package multiple permutations for the same shader into a single "blob" file. These files use a custom format that is somewhat similar to regular TAR. 
+When the `--blob` command line argument is specified, ShaderMake will package multiple permutations for the same shader into a single "blob" file. These files use a custom format that is somewhat similar to regular TAR.
 
 ShaderMake provides a small library with parsing functions to use these blob files in applications. This library can be statically linked with an application by including ShaderMake as a git submodule and linking the `ShaderMakeBlob` target to your application:
 

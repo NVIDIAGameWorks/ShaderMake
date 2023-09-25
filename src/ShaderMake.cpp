@@ -109,6 +109,7 @@ struct Options
     bool pdb = false;
     bool stripReflection = false;
     bool matrixRowMajor = false;
+    bool hlsl2021 = false;
     bool verbose = false;
     bool colorize = false;
     bool useAPI = false;
@@ -508,6 +509,7 @@ bool Options::Parse(int32_t argc, const char** argv)
             OPT_BOOLEAN(0, "PDB", &pdb, "Output PDB files in 'out/PDB/' folder", nullptr, 0, 0),
             OPT_BOOLEAN(0, "stripReflection", &stripReflection, "Maps to '-Qstrip_reflect' DXC/FXC option: strip reflection information from a shader binary", nullptr, 0, 0),
             OPT_BOOLEAN(0, "matrixRowMajor", &matrixRowMajor, "Maps to '-Zpr' DXC/FXC option: pack matrices in row-major order", nullptr, 0, 0),
+            OPT_BOOLEAN(0, "hlsl2021", &hlsl2021, "Maps to '-HV 2021' DXC option: enable HLSL 2021 standard", nullptr, 0, 0),
         OPT_GROUP("Defines & include directories:"),
             OPT_STRING('I', "include", &unused, "Include directory(s)", AddInclude, (intptr_t)this, 0),
             OPT_STRING('D', "define", &unused, "Macro definition(s) in forms 'M=value' or 'M'", AddGlobalDefine, (intptr_t)this, 0),
@@ -1004,6 +1006,12 @@ void DxcCompile()
             if (g_Options.matrixRowMajor)
                 args.push_back(DXC_ARG_PACK_MATRIX_ROW_MAJOR);
 
+            if (g_Options.hlsl2021)
+            {
+                args.push_back(L"-HV");
+                args.push_back(L"2021");
+            }
+
             if (g_Options.pdb)
             {
                 // TODO: for SPIRV PDB can only be embedded, GetOutput(DXC_OUT_PDB) silently fails...
@@ -1178,6 +1186,9 @@ void ExeCompile()
 
             if (g_Options.matrixRowMajor)
                 cmd << " -Zpr";
+
+            if (g_Options.hlsl2021)
+                cmd << " -HV 2021";
 
             if (g_Options.pdb)
                 cmd << " -Zi -Zsb"; // only binary affects hash
