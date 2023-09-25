@@ -1610,20 +1610,19 @@ int32_t main(int32_t argc, const char** argv)
 
         if (putenv(envBuf) != 0)
             return 1;
-
-        if (g_Options.verbose)
-            Printf("%s\n", envBuf);
     }
 
-#ifdef _WIN32
-    // Setup a directory where to look for "dxcompiler" first
     if (g_Options.compiler)
     {
+        Printf(GRAY "Compiler: %s\n", g_Options.compiler);
+
+#ifdef _WIN32
+        // Setup a directory where to look for "dxcompiler" first
         fs::path compilerDir = fs::path(g_Options.compiler).parent_path();
         if (g_Options.platform != DXBC && compilerDir != "")
             SetDllDirectoryA(compilerDir.string().c_str());
-    }
 #endif
+    }
 
     { // Gather shader permutations
         fs::file_time_type configWriteTime = fs::last_write_time(g_Options.configFile);
