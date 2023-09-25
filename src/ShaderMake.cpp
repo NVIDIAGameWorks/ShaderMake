@@ -1036,6 +1036,19 @@ void DxcCompile()
                     args.push_back(L"-Qstrip_reflect");
             }
 
+            // Debug output
+            if (g_Options.verbose)
+            {
+                wstringstream cmd;
+                for (const wstring& arg : args)
+                {
+                    cmd << arg;
+                    cmd << L" ";
+                }
+
+                Printf("%ls\n", cmd.str().c_str());
+            }
+
             // Now that args are finalized, get their C-string pointers into a vector
             vector<const wchar_t*> argPointers;
             argPointers.reserve(args.size());
@@ -1225,6 +1238,7 @@ void ExeCompile()
 
         cmd << " 2>&1";
 
+        // Debug output
         if (g_Options.verbose)
             Printf("%s\n", cmd.str().c_str());
 
@@ -1623,17 +1637,15 @@ int32_t main(int32_t argc, const char** argv)
             return 1;
     }
 
+#ifdef _WIN32
     if (g_Options.compiler)
     {
-        Printf(GRAY "Compiler: %s\n", g_Options.compiler);
-
-#ifdef _WIN32
         // Setup a directory where to look for "dxcompiler" first
         fs::path compilerDir = fs::path(g_Options.compiler).parent_path();
         if (g_Options.platform != DXBC && compilerDir != "")
             SetDllDirectoryA(compilerDir.string().c_str());
-#endif
     }
+#endif
 
     { // Gather shader permutations
         fs::file_time_type configWriteTime = fs::last_write_time(g_Options.configFile);
@@ -1696,6 +1708,9 @@ int32_t main(int32_t argc, const char** argv)
     // Process tasks
     if (!g_TaskData.empty())
     {
+        if (g_Options.compiler)
+            Printf(GRAY "Compiler: %s\n", g_Options.compiler);
+
         g_OriginalTaskCount = (uint32_t)g_TaskData.size();
         g_ProcessedTaskCount = 0;
         g_FailedTaskCount = 0;
