@@ -403,7 +403,12 @@ public:
     { fprintf(stream, "\n};\n"); }
 
     bool WriteDataAsBinary(const void* data, size_t size)
-    { return fwrite(data, size, 1, stream) == 1; }
+    {
+        if (size == 0)
+            return true;
+
+        return fwrite(data, size, 1, stream) == 1;
+    }
 
     // For use as a callback in "WriteFileHeader" and "WritePermutation" functions
     static bool WriteDataAsTextCallback(const void* data, size_t size, void* context)
@@ -1845,24 +1850,53 @@ int32_t main(int32_t argc, const char** argv)
             threads[i].join();
 
         // Dump shader blobs
-        for (const auto& it : g_ShaderBlobs)
+        for (const auto& [blobName, blobEntries] : g_ShaderBlobs)
         {
+            // If a blob would contain one entry with no defines, just skip it:
+            // the individual file's output name is the same as the blob, and we're done here.
+            if (blobEntries.size() == 1 && blobEntries[0].combinedDefines.empty())
+                continue;
+
+            // Validate that the blob doesn't contain any shaders with empty defines.
+            // In such case, that individual shader's output file is the same as the blob output file, which wouldn't work.
+            // We could detect this condition earlier and work around it by renaming the shader output file, if necessary.
+            bool invalidEntry = false;
+            for (const auto& entry : blobEntries)
+            {
+                if (entry.combinedDefines.empty())
+                {
+                    const string blobBaseName = fs::path(blobName).stem().generic_string();
+                    Printf(RED "ERROR: Cannot create a blob for shader %s where some permutation(s) have no definitions!",
+                        blobBaseName.c_str());
+                    invalidEntry = true;
+                    break;
+                }
+            }
+
+            if (invalidEntry)
+            {
+                if (g_Options.continueOnError)
+                    continue;
+
+                return 1;
+            }
+
             if (g_Options.binaryBlob)
             {
-                bool result = CreateBlob(it.first, it.second, false);
+                bool result = CreateBlob(blobName, blobEntries, false);
                 if (!result && !g_Options.continueOnError)
                     return 1;
             }
 
             if (g_Options.headerBlob)
             {
-                bool result = CreateBlob(it.first, it.second, true);
+                bool result = CreateBlob(blobName, blobEntries, true);
                 if (!result && !g_Options.continueOnError)
                     return 1;
             }
 
             if (!g_Options.binary)
-                RemoveIntermediateBlobFiles(it.second);
+                RemoveIntermediateBlobFiles(blobEntries);
         }
 
         // Report failed tasks
