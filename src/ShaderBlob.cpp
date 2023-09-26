@@ -168,23 +168,29 @@ std::string FormatShaderNotFoundMessage(const void* blob, size_t blobSize, const
     return ss.str();
 }
 
-bool WriteFileHeader(FILE* file)
+bool WriteFileHeader(
+    WriteFileCallback write,
+    void* context)
 {
-    const size_t written = fwrite(g_BlobSignature, g_BlobSignatureSize, 1, file);
-    return written == 1;
+    return write(g_BlobSignature, g_BlobSignatureSize, context);
 }
 
-bool WritePermutation(FILE* file, const std::string& permutationKey, const void* binary, size_t binarySize)
+bool WritePermutation(
+    WriteFileCallback write,
+    void* context,
+    const std::string& permutationKey,
+    const void* binary,
+    size_t binarySize)
 {
     ShaderBlobEntry binaryEntry{};
     binaryEntry.permutationSize = (uint32_t)permutationKey.size();
     binaryEntry.dataSize = (uint32_t)binarySize;
 
-    size_t written = 0;
-    written += fwrite(&binaryEntry, sizeof(binaryEntry), 1, file);
-    written += fwrite(permutationKey.data(), binaryEntry.permutationSize, 1, file);
-    written += fwrite(binary, binarySize, 1, file);
-    return written == 3;
+    bool success;
+    success = write(&binaryEntry, sizeof(binaryEntry), context);
+    success &= write(permutationKey.data(), binaryEntry.permutationSize, context);
+    success &= write(binary, binarySize, context);
+    return success;
 }
 
 } // namespace ShaderMake

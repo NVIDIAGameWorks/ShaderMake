@@ -103,6 +103,7 @@ struct Options
     bool isBinaryNeeded = false;
     bool isHeaderNeeded = false;
     bool isBlobNeeded = false;
+    bool keepIntermediates = false;
     bool continueOnError = false;
     bool warningsAreErrors = false;
     bool allResourcesBound = false;
@@ -336,60 +337,109 @@ void Printf(const char* format, ...)
     fflush(stdout);
 }
 
-void DumpBinaryAndHeader(const TaskData& taskData, const uint8_t* data, size_t dataSize)
+// A class that is used to write blobs of data as either binary or C-strings.
+class DataOutputContext
 {
-    string outputFile = taskData.outputFileWithoutExt + g_OutputExt;
+public:
+    FILE* file = nullptr;
 
-    // Binary output
-    if (g_Options.isBinaryNeeded || g_Options.isBlobNeeded)
+    DataOutputContext(const char* fileName, bool textMode)
     {
-        FILE* stream = fopen(outputFile.c_str(), "wb");
-        if (stream)
+        file = fopen(fileName, textMode ? "w": "wb");
+    }
+
+    ~DataOutputContext()
+    {
+        if (file)
         {
-            fwrite(data, 1, dataSize, stream);
-            fclose(stream);
+            fclose(file);
+            file = nullptr;
         }
     }
 
-    // Header output
-    if (g_Options.isHeaderNeeded)
+    void WriteTextPreamble(const char* symbolName)
     {
-        outputFile += ".h";
+        fprintf(file, "const uint8_t %s[] = {", symbolName);
+    }
 
-        FILE* stream = fopen(outputFile.c_str(), "w");
-        if (stream)
+    void WriteTextEpilog()
+    {
+        fprintf(file, "\n};\n");
+    }
+
+    bool WriteDataAsText(const void* data, size_t size)
+    {
+        for (size_t i = 0; i < size; i++)
         {
-            uint32_t n = 129;
+            uint8_t value = ((const uint8_t*)data)[i];
 
-            fs::path path = taskData.outputFileWithoutExt;
-            string name = path.filename().string();
-            replace(name.begin(), name.end(), '.', '_');
-
-            fprintf(stream, "const uint8_t g_%s_%s[] = {", name.c_str(), g_PlatformExts[g_Options.platform] + 1);
-
-            for (size_t i = 0; i < dataSize; i++)
+            if (m_lineLength > 128)
             {
-                uint8_t d = data[i];
-
-                if (n > 128)
-                {
-                    fprintf(stream, "\n    ");
-                    n = 0;
-                }
-
-                fprintf(stream, "%u, ", d);
-
-                if (d < 10)
-                    n += 3;
-                else if (d < 100)
-                    n += 4;
-                else
-                    n += 5;
+                fprintf(file, "\n    ");
+                m_lineLength = 0;
             }
 
-            fprintf(stream, "\n};\n");
-            fclose(stream);
+            fprintf(file, "%u, ", value);
+
+            if (value < 10)
+                m_lineLength += 3;
+            else if (value < 100)
+                m_lineLength += 4;
+            else
+                m_lineLength += 5;
         }
+
+        return true;
+    }
+
+    bool WriteDataAsBinary(const void* data, size_t size)
+    {
+        return fwrite(data, size, 1, file) == 1;
+    }
+
+    // For use as a callback in ShaderMake::WriteFileHeader and WritePermutation functions
+    static bool WriteDataAsTextCallback(const void* data, size_t size, void* context)
+    {
+        return ((DataOutputContext*)context)->WriteDataAsText(data, size);
+    }
+
+    // For use as a callback in ShaderMake::WriteFileHeader and WritePermutation functions
+    static bool WriteDataAsBinaryCallback(const void* data, size_t size, void* context)
+    {
+        return ((DataOutputContext*)context)->WriteDataAsBinary(data, size);
+    }
+
+private:
+    uint32_t m_lineLength = 129;
+};
+
+void DumpBinaryOrHeader(const TaskData& taskData, const uint8_t* data, size_t dataSize)
+{
+    string outputFile = taskData.outputFileWithoutExt + g_OutputExt;
+    
+    bool useTextOutput = g_Options.isHeaderNeeded && !g_Options.isBlobNeeded;
+    if (useTextOutput)
+        outputFile += ".h";
+
+    DataOutputContext context(outputFile.c_str(), useTextOutput);
+
+    if (!context.file)
+        return;
+
+    if (useTextOutput)
+    {
+        fs::path path = taskData.outputFileWithoutExt;
+        string name = path.filename().string();
+        replace(name.begin(), name.end(), '.', '_');
+        name = string("g_") + name + string("_") + string(g_PlatformExts[g_Options.platform] + 1);
+
+        context.WriteTextPreamble(name.c_str());
+        context.WriteDataAsText(data, dataSize);
+        context.WriteTextEpilog();
+    }
+    else
+    {
+        context.WriteDataAsBinary(data, dataSize);
     }
 }
 
@@ -521,6 +571,7 @@ bool Options::Parse(int32_t argc, const char** argv)
             OPT_BOOLEAN(0, "serial", &serial, "Disable multi-threading", nullptr, 0, 0),
             OPT_BOOLEAN(0, "flatten", &flatten, "Flatten source directory structure in the output directory", nullptr, 0, 0),
             OPT_BOOLEAN(0, "continue", &continueOnError, "Continue compilation if an error is occured", nullptr, 0, 0),
+            OPT_BOOLEAN(0, "keep", &keepIntermediates, "Don't delete intermediate binary files when creating blobs", nullptr, 0, 0),
 #ifdef _WIN32
             OPT_BOOLEAN(0, "useAPI", &useAPI, "Use FXC (d3dcompiler) or DXC (dxcompiler) API explicitly (Windows only)", nullptr, 0, 0),
 #endif
@@ -566,9 +617,15 @@ bool Options::Parse(int32_t argc, const char** argv)
         return false;
     }
 
-    if (!isBlobNeeded && !isBinaryNeeded && !isHeaderNeeded)
+    if (!isBinaryNeeded && !isHeaderNeeded)
     {
-        Printf(RED "ERROR: At least one of 'blob', 'binary' or 'header' must be set!\n");
+        Printf(RED "ERROR: One of 'binary' and 'header' must be set!\n");
+        return false;
+    }
+
+    if (isBinaryNeeded && isHeaderNeeded)
+    {
+        Printf(RED "ERROR: Both 'binary' and 'header' cannot be used at the same time!\n");
         return false;
     }
 
@@ -874,7 +931,7 @@ void FxcCompile()
 
         // Dump outputs
         if (isSucceeded)
-            DumpBinaryAndHeader(taskData, (uint8_t*)codeBlob->GetBufferPointer(), codeBlob->GetBufferSize());
+            DumpBinaryOrHeader(taskData, (uint8_t*)codeBlob->GetBufferPointer(), codeBlob->GetBufferSize());
 
         // Update progress
         UpdateProgress(taskData, isSucceeded, errorBlob ? (char*)errorBlob->GetBufferPointer() : nullptr);
@@ -1100,7 +1157,7 @@ void DxcCompile()
 
         // Dump outputs
         if (isSucceeded)
-            DumpBinaryAndHeader(taskData, (uint8_t*)codeBlob->GetBufferPointer(), codeBlob->GetBufferSize());
+            DumpBinaryOrHeader(taskData, (uint8_t*)codeBlob->GetBufferPointer(), codeBlob->GetBufferSize());
 
         // Update progress
         UpdateProgress(taskData, isSucceeded, errorBlob ? (char*)errorBlob->GetBufferPointer() : nullptr);
@@ -1151,8 +1208,10 @@ void ExeCompile()
             // Output file
             string outputFile = taskData.outputFileWithoutExt + g_OutputExt;
             if (g_Options.isBinaryNeeded || g_Options.isBlobNeeded)
+            {
                 cmd << " -Fo " << EscapePath(outputFile);
-            if (g_Options.isHeaderNeeded)
+            }
+            else if (g_Options.isHeaderNeeded)
             {
                 fs::path path = taskData.outputFileWithoutExt;
                 string name = path.filename().string();
@@ -1507,17 +1566,34 @@ bool ExpandPermutations(uint32_t lineIndex, const string& line, const fs::file_t
 
 bool CreateBlob(const string& finalOutputFileName, const vector<BlobEntry>& entries)
 {
+    const bool useTextOutput = g_Options.isHeaderNeeded;
+
     // Create output file
-    FILE* outputStream = fopen(finalOutputFileName.c_str(), "wb");
-    if (!outputStream)
+    DataOutputContext outputContext(finalOutputFileName.c_str(), useTextOutput);
+
+    if (!outputContext.file)
     {
         Printf(RED "ERROR: Can't open output file '%s'!\n" WHITE, finalOutputFileName.c_str());
 
         return false;
     }
 
+    if (useTextOutput)
+    {
+        fs::path path = finalOutputFileName;
+        string name = path.filename().stem().string();
+        replace(name.begin(), name.end(), '.', '_');
+        name = string("g_") + name;
+
+        outputContext.WriteTextPreamble(name.c_str());
+    }
+
+    ShaderMake::WriteFileCallback writeFileCallback = useTextOutput
+        ? &DataOutputContext::WriteDataAsTextCallback
+        : &DataOutputContext::WriteDataAsBinaryCallback;
+    
     // Write "blob" header
-    if (!ShaderMake::WriteFileHeader(outputStream))
+    if (!ShaderMake::WriteFileHeader(writeFileCallback, &outputContext))
     {
         Printf(RED "ERROR: Failed to write into output file '%s'!\n" WHITE, finalOutputFileName.c_str());
 
@@ -1538,7 +1614,6 @@ bool CreateBlob(const string& finalOutputFileName, const vector<BlobEntry>& entr
         if (!inputStream)
         {
             Printf(RED "ERROR: Can't open file source '%s'!\n" WHITE, file.c_str());
-            fclose(outputStream);
 
             return false;
         }
@@ -1558,7 +1633,7 @@ bool CreateBlob(const string& finalOutputFileName, const vector<BlobEntry>& entr
             size_t bytesRead = fread(buffer, 1, fileSize, inputStream);
             if (bytesRead == fileSize)
             {
-                if (!ShaderMake::WritePermutation(outputStream, entry.permutation, buffer, fileSize))
+                if (!ShaderMake::WritePermutation(writeFileCallback, &outputContext, entry.permutation, buffer, fileSize))
                 {
                     Printf(YELLOW "ERROR: Failed to write a shader permutation into '%s'!\n", finalOutputFileName.c_str());
                     success = false;
@@ -1588,11 +1663,14 @@ bool CreateBlob(const string& finalOutputFileName, const vector<BlobEntry>& entr
         if (!success)
             break;
 
-        if (!g_Options.isBinaryNeeded)
+        if (!g_Options.keepIntermediates)
             fs::remove(file);
     }
 
-    fclose(outputStream);
+    if (useTextOutput)
+    {
+        outputContext.WriteTextEpilog();
+    }
 
     return success;
 }
