@@ -720,6 +720,13 @@ bool ConfigLine::Parse(int32_t argc, const char** argv)
     argparse_describe(&argparse, nullptr, "\nConfiguration options for a shader");
     argparse_parse(&argparse, argc, argv);
 
+    // If there are some non-option elements in the config line, they will remain in the argv array.
+    if (argv[0])
+    {
+        Printf(RED "ERROR: Unrecognized element in the config line: '%s'!\n", argv[0]);
+        return false;
+    }
+
     if (!profile)
     {
         Printf(RED "ERROR: Shader target not specified!\n");
