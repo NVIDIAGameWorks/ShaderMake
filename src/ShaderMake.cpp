@@ -102,8 +102,8 @@ struct Options
     bool help = false;
     bool binary = false;
     bool header = false;
-    bool blob = false;
-    bool keep = false;
+    bool binaryBlob = false;
+    bool headerBlob = false;
     bool continueOnError = false;
     bool warningsAreErrors = false;
     bool allResourcesBound = false;
@@ -116,6 +116,9 @@ struct Options
     bool useAPI = false;
 
     bool Parse(int32_t argc, const char** argv);
+
+    inline bool IsBlob() const
+    { return binaryBlob || headerBlob; }
 };
 
 struct ConfigLine
@@ -143,19 +146,19 @@ struct TaskData
 
 struct BlobEntry
 {
-    fs::path compiledPermutationFileWithoutExt;
-    string permutation;
+    string permutationFileWithoutExt;
+    string combinedDefines;
 };
 
+Options g_Options;
 map<fs::path, fs::file_time_type> g_HierarchicalUpdateTimes;
 map<string, vector<BlobEntry>> g_ShaderBlobs;
 vector<TaskData> g_TaskData;
+mutex g_TaskMutex;
 atomic<uint32_t> g_ProcessedTaskCount;
 atomic<bool> g_Terminate = false;
 atomic<uint32_t> g_FailedTaskCount = 0;
 uint32_t g_OriginalTaskCount;
-Options g_Options;
-mutex g_TaskMutex;
 const char* g_OutputExt = nullptr;
 
 static const char* g_PlatformNames[] = {
@@ -282,7 +285,7 @@ void TokenizeConfigLine(char* in, vector<const char*>& tokens)
         tokens.push_back(token);
 }
 
-uint32_t GetFileLength(FILE* f)
+uint32_t GetFileLength(FILE* stream)
 {
     /*
     TODO: can be done more efficiently
@@ -299,10 +302,10 @@ uint32_t GetFileLength(FILE* f)
         off_t size = buf.st_size;
     */
 
-    const uint32_t pos = ftell(f);
-    fseek(f, 0, SEEK_END);
-    const uint32_t len = ftell(f);
-    fseek(f, pos, SEEK_SET);
+    const uint32_t pos = ftell(stream);
+    fseek(stream, 0, SEEK_END);
+    const uint32_t len = ftell(stream);
+    fseek(stream, pos, SEEK_SET);
 
     return len;
 }
@@ -337,21 +340,34 @@ void Printf(const char* format, ...)
     fflush(stdout);
 }
 
-// A class that is used to write blobs of data as either binary or C-strings.
+string GetShaderName(const fs::path& path)
+{
+    string name = path.filename().string();
+    replace(name.begin(), name.end(), '.', '_');
+    name += "_" + string(g_PlatformExts[g_Options.platform] + 1);
+
+    return "g_" + name;
+}
+
+// A class that is used to write a code blob as binary or C-string
 class DataOutputContext
 {
 public:
-    FILE* file = nullptr;
+    FILE* stream = nullptr;
 
-    DataOutputContext(const char* fileName, bool textMode)
-    { file = fopen(fileName, textMode ? "w": "wb"); }
+    DataOutputContext(const char* file, bool textMode)
+    {
+        stream = fopen(file, textMode ? "w": "wb");
+        if (!stream)
+            Printf(RED "ERROR: Can't open file '%s' for writing!\n", file);
+    }
 
     ~DataOutputContext()
     {
-        if (file)
+        if (stream)
         {
-            fclose(file);
-            file = nullptr;
+            fclose(stream);
+            stream = nullptr;
         }
     }
 
@@ -363,11 +379,11 @@ public:
 
             if (m_lineLength > 128)
             {
-                fprintf(file, "\n    ");
+                fprintf(stream, "\n    ");
                 m_lineLength = 0;
             }
 
-            fprintf(file, "%u, ", value);
+            fprintf(stream, "%u, ", value);
 
             if (value < 10)
                 m_lineLength += 3;
@@ -380,16 +396,16 @@ public:
         return true;
     }
 
-    void WriteTextPreamble(const char* symbolName)
-    { fprintf(file, "const uint8_t %s[] = {", symbolName); }
+    void WriteTextPreamble(const char* shaderName)
+    { fprintf(stream, "const uint8_t %s[] = {", shaderName); }
 
     void WriteTextEpilog()
-    { fprintf(file, "\n};\n"); }
+    { fprintf(stream, "\n};\n"); }
 
     bool WriteDataAsBinary(const void* data, size_t size)
-    { return fwrite(data, size, 1, file) == 1; }
+    { return fwrite(data, size, 1, stream) == 1; }
 
-    // For use as a callback in ShaderMake::WriteFileHeader and WritePermutation functions
+    // For use as a callback in "WriteFileHeader" and "WritePermutation" functions
     static bool WriteDataAsTextCallback(const void* data, size_t size, void* context)
     { return ((DataOutputContext*)context)->WriteDataAsText(data, size); }
 
@@ -400,32 +416,30 @@ private:
     uint32_t m_lineLength = 129;
 };
 
-void DumpBinaryOrHeader(const TaskData& taskData, const uint8_t* data, size_t dataSize)
+void DumpShader(const TaskData& taskData, const uint8_t* data, size_t dataSize)
 {
-    string outputFile = taskData.outputFileWithoutExt + g_OutputExt;
-    
-    bool useTextOutput = g_Options.header && !g_Options.blob;
-    if (useTextOutput)
-        outputFile += ".h";
+    string file = taskData.outputFileWithoutExt + g_OutputExt;
 
-    DataOutputContext context(outputFile.c_str(), useTextOutput);
-
-    if (!context.file)
-        return;
-
-    if (useTextOutput)
+    if (g_Options.binary || g_Options.IsBlob())
     {
-        fs::path path = taskData.outputFileWithoutExt;
-        string name = path.filename().string();
-        replace(name.begin(), name.end(), '.', '_');
-        name = string("g_") + name + string("_") + string(g_PlatformExts[g_Options.platform] + 1);
+        DataOutputContext context(file.c_str(), false);
+        if (!context.stream)
+            return;
 
-        context.WriteTextPreamble(name.c_str());
+        context.WriteDataAsBinary(data, dataSize);
+    }
+
+    if (g_Options.header)
+    {
+        DataOutputContext context((file + ".h").c_str(), true);
+        if (!context.stream)
+            return;
+
+        string shaderName = GetShaderName(taskData.outputFileWithoutExt);
+        context.WriteTextPreamble(shaderName.c_str());
         context.WriteDataAsText(data, dataSize);
         context.WriteTextEpilog();
     }
-    else
-        context.WriteDataAsBinary(data, dataSize);
 }
 
 void UpdateProgress(const TaskData& taskData, bool isSucceeded, const char* message)
@@ -435,7 +449,8 @@ void UpdateProgress(const TaskData& taskData, bool isSucceeded, const char* mess
     {
         float progress = 100.0f * float(++g_ProcessedTaskCount) / float(g_OriginalTaskCount);
 
-        if (message)
+        // DXC from Win SDK is always outdated. DXC from VK SDK doesn't sign. Ignore warning about signing to avoid spam...
+        if (message && !strstr(message, "DXIL signing library"))
         {
             Printf(YELLOW "[%5.1f%%] %s %s {%s} {%s}\n%s",
                 progress, g_Options.platformName,
@@ -532,9 +547,10 @@ bool Options::Parse(int32_t argc, const char** argv)
             OPT_STRING('p', "platform", &platformName, "DXBC, DXIL or SPIRV", nullptr, 0, 0),
             OPT_STRING('c', "config", &config, "Configuration file with the list of shaders to compile", nullptr, 0, 0),
             OPT_STRING('o', "out", &outputDir, "Output directory", nullptr, 0, 0),
-            OPT_BOOLEAN(0, "binary", &binary, "Output native binary files", nullptr, 0, 0),
-            OPT_BOOLEAN(0, "header", &header, "Output header files", nullptr, 0, 0),
-            OPT_BOOLEAN(0, "blob", &blob, "Output shader blob files", nullptr, 0, 0),
+            OPT_BOOLEAN('b', "binary", &binary, "Output binary files", nullptr, 0, 0),
+            OPT_BOOLEAN('h', "header", &header, "Output header files", nullptr, 0, 0),
+            OPT_BOOLEAN('B', "binaryBlob", &binaryBlob, "Output binary blob files", nullptr, 0, 0),
+            OPT_BOOLEAN('H', "headerBlob", &headerBlob, "Output header blob files", nullptr, 0, 0),
             OPT_STRING(0, "compiler", &compiler, "Path to a specific FXC/DXC compiler", nullptr, 0, 0),
         OPT_GROUP("Compiler settings:"),
             OPT_STRING('m', "shaderModel", &shaderModel, "Shader model for DXIL/SPIRV (always SM 5.0 for DXBC)", nullptr, 0, 0),
@@ -556,7 +572,6 @@ bool Options::Parse(int32_t argc, const char** argv)
             OPT_BOOLEAN(0, "serial", &serial, "Disable multi-threading", nullptr, 0, 0),
             OPT_BOOLEAN(0, "flatten", &flatten, "Flatten source directory structure in the output directory", nullptr, 0, 0),
             OPT_BOOLEAN(0, "continue", &continueOnError, "Continue compilation if an error is occured", nullptr, 0, 0),
-            OPT_BOOLEAN(0, "keep", &keep, "Keep binary files when creating blobs", nullptr, 0, 0),
 #ifdef _WIN32
             OPT_BOOLEAN(0, "useAPI", &useAPI, "Use FXC (d3dcompiler) or DXC (dxcompiler) API explicitly (Windows only)", nullptr, 0, 0),
 #endif
@@ -602,37 +617,30 @@ bool Options::Parse(int32_t argc, const char** argv)
         return false;
     }
 
-    if (!binary && !header)
+    if (!binary && !header && !binaryBlob && !headerBlob)
     {
-        Printf(RED "ERROR: One of 'binary' and 'header' must be set!\n");
+        Printf(RED "ERROR: One of 'binary', 'header', 'binaryBlob' or 'headerBlob' must be set!\n");
         return false;
     }
-
-    if (binary && header)
-    {
-        Printf(RED "ERROR: Both 'binary' and 'header' cannot be used at the same time!\n");
-        return false;
-    }
-
     if (!platformName)
     {
         Printf(RED "ERROR: Platform not specified!\n");
         return false;
     }
 
-    if (!useAPI && !compiler)
+    if (!compiler)
     {
         Printf(RED "ERROR: Compiler not specified!\n");
         return false;
     }
 
-    if (!useAPI && !fs::exists(compiler))
+    if (!fs::exists(compiler))
     {
         Printf(RED "ERROR: Compiler '%s' does not exist!\n", compiler);
         return false;
     }
 
-    if (strlen(shaderModel) != 3)
+    if (strlen(shaderModel) != 3 || strstr(shaderModel, "."))
     {
         Printf(RED "ERROR: Shader model ('%s') must have format 'X_Y'!\n", shaderModel);
         return false;
@@ -914,14 +922,14 @@ void FxcCompile()
             codeBlob = strippedBlob;
         }
 
-        // Dump outputs
+        // Dump output
         if (isSucceeded)
-            DumpBinaryOrHeader(taskData, (uint8_t*)codeBlob->GetBufferPointer(), codeBlob->GetBufferSize());
+            DumpShader(taskData, (uint8_t*)codeBlob->GetBufferPointer(), codeBlob->GetBufferSize());
 
         // Update progress
         UpdateProgress(taskData, isSucceeded, errorBlob ? (char*)errorBlob->GetBufferPointer() : nullptr);
 
-        // Terminate if this shader failed and continueOnError is not set
+        // Terminate if this shader failed and "--continue" is not set
         if (g_Terminate)
             break;
     }
@@ -1140,9 +1148,9 @@ void DxcCompile()
         if (g_Terminate)
             break;
 
-        // Dump outputs
+        // Dump output
         if (isSucceeded)
-            DumpBinaryOrHeader(taskData, (uint8_t*)codeBlob->GetBufferPointer(), codeBlob->GetBufferSize());
+            DumpShader(taskData, (uint8_t*)codeBlob->GetBufferPointer(), codeBlob->GetBufferSize());
 
         // Update progress
         UpdateProgress(taskData, isSucceeded, errorBlob ? (char*)errorBlob->GetBufferPointer() : nullptr);
@@ -1192,16 +1200,14 @@ void ExeCompile()
 
             // Output file
             string outputFile = taskData.outputFileWithoutExt + g_OutputExt;
-            if (g_Options.binary || g_Options.blob)
+            if (g_Options.binary || g_Options.IsBlob())
                 cmd << " -Fo " << EscapePath(outputFile);
-            else if (g_Options.header)
+            if (g_Options.header)
             {
-                fs::path path = taskData.outputFileWithoutExt;
-                string name = path.filename().string();
-                replace(name.begin(), name.end(), '.', '_');
+                string name = GetShaderName(taskData.outputFileWithoutExt);
 
                 cmd << " -Fh " << EscapePath(outputFile) << ".h";
-                cmd << " -Vn g_" << name << "_" << g_PlatformExts[g_Options.platform] + 1;
+                cmd << " -Vn " << name;
             }
 
             // Profile
@@ -1392,7 +1398,7 @@ bool GetHierarchicalUpdateTime(const fs::path& file, list<fs::path>& callStack, 
     return true;
 }
 
-bool ProcessConfigLine(uint32_t lineIndex, const string& line, const fs::file_time_type& configWriteTime)
+bool ProcessConfigLine(uint32_t lineIndex, const string& line, const fs::file_time_type& configTime)
 {
     // Tokenize
     string lineCopy = line;
@@ -1423,15 +1429,15 @@ bool ProcessConfigLine(uint32_t lineIndex, const string& line, const fs::file_ti
     }
 
     // Compiled shader name
-    fs::path compiledName = RemoveLeadingDotDots(configLine.source);
-    compiledName.replace_extension("");
+    fs::path shaderName = RemoveLeadingDotDots(configLine.source);
+    shaderName.replace_extension("");
     if (g_Options.flatten || configLine.outputDir) // Specifying -o <path> for a shader removes the original path
-        compiledName = compiledName.filename();
+        shaderName = shaderName.filename();
     if (strcmp(configLine.entryPoint, "main"))
-        compiledName += "_" + string(configLine.entryPoint);
+        shaderName += "_" + string(configLine.entryPoint);
 
-    // Compiled shader permutation name
-    fs::path compiledPermutation = compiledName;
+    // Compiled permutation name
+    fs::path permutationName = shaderName;
     if (!configLine.defines.empty())
     {
         uint32_t permutationHash = HashToUint(hash<string>()(combinedDefines));
@@ -1439,18 +1445,17 @@ bool ProcessConfigLine(uint32_t lineIndex, const string& line, const fs::file_ti
         char buf[16];
         snprintf(buf, sizeof(buf), "_%08X", permutationHash);
 
-        compiledPermutation += buf;
+        permutationName += buf;
     }
 
     // Output directory
-    fs::path destDir = g_Options.outputDir;
-    // Apply the -o <path> per-shader option as a subdirectory in the main output dir
+    fs::path outputDir = g_Options.outputDir;
     if (configLine.outputDir)
-        destDir /= configLine.outputDir;
+        outputDir /= configLine.outputDir;
 
     // Create intermediate output directories
     bool force = g_Options.force;
-    fs::path endPath = destDir / compiledName.parent_path();
+    fs::path endPath = outputDir / shaderName.parent_path();
     if (g_Options.pdb)
         endPath /= PDB_DIR;
     if (endPath.string() != "" && !fs::exists(endPath))
@@ -1459,35 +1464,85 @@ bool ProcessConfigLine(uint32_t lineIndex, const string& line, const fs::file_ti
         force = true;
     }
 
-    fs::path sourceFile = g_Options.configFile.parent_path() / g_Options.sourceDir / configLine.source;
+    // Early out if no changes detected
+    fs::file_time_type zero; // constructor sets to 0
+    fs::file_time_type outputTime = zero;
 
-    // Construct output file name
-    fs::path finalOutputFile = destDir;
-    if (g_Options.blob)
-        finalOutputFile /= compiledName;
-    else
-        finalOutputFile /= compiledPermutation;
-    finalOutputFile += g_OutputExt;
-    if (g_Options.header)
-        finalOutputFile += ".h";
-
-    // If output is available, update modification time heirarchically
-    if (!force && fs::exists(finalOutputFile))
     {
-        fs::file_time_type fileTime = fs::last_write_time(finalOutputFile);
+        fs::path outputFile = outputDir / permutationName;
 
-        fs::file_time_type sourceHierarchyTime;
+        outputFile += g_OutputExt;
+        if (g_Options.binary)
+        {
+            force |= !fs::exists(outputFile);
+            if (!force)
+            {
+                if (outputTime == zero)
+                    outputTime = fs::last_write_time(outputFile);
+                else
+                    outputTime = min(outputTime, fs::last_write_time(outputFile));
+            }
+        }
+
+        outputFile += ".h";
+        if (g_Options.header)
+        {
+            force |= !fs::exists(outputFile);
+            if (!force)
+            {
+                if (outputTime == zero)
+                    outputTime = fs::last_write_time(outputFile);
+                else
+                    outputTime = min(outputTime, fs::last_write_time(outputFile));
+            }
+        }
+    }
+
+    {
+        fs::path outputFile = outputDir / shaderName;
+
+        outputFile += g_OutputExt;
+        if (g_Options.binaryBlob)
+        {
+            force |= !fs::exists(outputFile);
+            if (!force)
+            {
+                if (outputTime == zero)
+                    outputTime = fs::last_write_time(outputFile);
+                else
+                    outputTime = min(outputTime, fs::last_write_time(outputFile));
+            }
+        }
+
+        outputFile += ".h";
+        if (g_Options.headerBlob)
+        {
+            force |= !fs::exists(outputFile);
+            if (!force)
+            {
+                if (outputTime == zero)
+                    outputTime = fs::last_write_time(outputFile);
+                else
+                    outputTime = min(outputTime, fs::last_write_time(outputFile));
+            }
+        }
+    }
+
+    if (!force)
+    {
         list<fs::path> callStack;
-        if (!GetHierarchicalUpdateTime(sourceFile, callStack, sourceHierarchyTime))
+        fs::file_time_type sourceTime;
+        fs::path sourceFile = g_Options.configFile.parent_path() / g_Options.sourceDir / configLine.source;
+        if (!GetHierarchicalUpdateTime(sourceFile, callStack, sourceTime))
             return false;
 
-        sourceHierarchyTime = max(sourceHierarchyTime, configWriteTime);
-        if (fileTime > sourceHierarchyTime)
+        sourceTime = max(sourceTime, configTime);
+        if (outputTime > sourceTime)
             return true;
     }
 
     // Prepare a task
-    fs::path compiledPermutationFileWithoutExt = destDir / compiledPermutation;
+    string outputFileWithoutExt = PathToString(outputDir / permutationName);
     uint32_t optimizationLevel = configLine.optimizationLevel == USE_GLOBAL_OPTIMIZATION_LEVEL ? g_Options.optimizationLevel : configLine.optimizationLevel;
     optimizationLevel = min(optimizationLevel, 3u);
 
@@ -1496,29 +1551,30 @@ bool ProcessConfigLine(uint32_t lineIndex, const string& line, const fs::file_ti
     taskData.entryPoint = configLine.entryPoint;
     taskData.profile = configLine.profile;
     taskData.combinedDefines = combinedDefines;
-    taskData.outputFileWithoutExt = compiledPermutationFileWithoutExt.string();
+    taskData.outputFileWithoutExt = outputFileWithoutExt;
     taskData.defines = configLine.defines;
     taskData.optimizationLevel = optimizationLevel;
 
     // Gather blobs
-    if (g_Options.blob && !configLine.defines.empty()) // TODO: should we allow blobs with 1 permutation only?
+    if (g_Options.IsBlob())
     {
-        BlobEntry entry;
-        entry.compiledPermutationFileWithoutExt = compiledPermutationFileWithoutExt;
-        entry.permutation = combinedDefines;
+        string blobName = PathToString(outputDir / shaderName);
+        vector<BlobEntry>& entries = g_ShaderBlobs[blobName];
 
-        vector<BlobEntry>& entries = g_ShaderBlobs[PathToString(finalOutputFile)];
+        BlobEntry entry;
+        entry.permutationFileWithoutExt = outputFileWithoutExt;
+        entry.combinedDefines = combinedDefines;
         entries.push_back(entry);
     }
 
     return true;
 }
 
-bool ExpandPermutations(uint32_t lineIndex, const string& line, const fs::file_time_type& configWriteTime)
+bool ExpandPermutations(uint32_t lineIndex, const string& line, const fs::file_time_type& configTime)
 {
     size_t opening = line.find('{');
     if (opening == string::npos)
-        return ProcessConfigLine(lineIndex, line, configWriteTime);
+        return ProcessConfigLine(lineIndex, line, configTime);
 
     size_t closing = line.find('}', opening);
     if (closing == string::npos)
@@ -1536,7 +1592,7 @@ bool ExpandPermutations(uint32_t lineIndex, const string& line, const fs::file_t
             comma = closing;
 
         string newConfig = line.substr(0, opening) + line.substr(current, comma - current) + line.substr(closing + 1);
-        if (!ExpandPermutations(lineIndex, newConfig, configWriteTime))
+        if (!ExpandPermutations(lineIndex, newConfig, configTime))
             return false;
 
         current = comma + 1;
@@ -1547,38 +1603,36 @@ bool ExpandPermutations(uint32_t lineIndex, const string& line, const fs::file_t
     return true;
 }
 
-bool CreateBlob(const string& finalOutputFileName, const vector<BlobEntry>& entries)
+bool CreateBlob(const string& blobName, const vector<BlobEntry>& entries, bool useTextOutput)
 {
-    const bool useTextOutput = g_Options.header;
-
     // Create output file
-    DataOutputContext outputContext(finalOutputFileName.c_str(), useTextOutput);
+    string outputFile = blobName;
+    outputFile += g_OutputExt;
+    if (useTextOutput)
+        outputFile += ".h";
 
-    if (!outputContext.file)
+    DataOutputContext outputContext(outputFile.c_str(), useTextOutput);
+    if (!outputContext.stream)
     {
-        Printf(RED "ERROR: Can't open output file '%s'!\n", finalOutputFileName.c_str());
+        Printf(RED "ERROR: Can't open output file '%s'!\n", outputFile.c_str());
 
         return false;
     }
 
     if (useTextOutput)
     {
-        fs::path path = finalOutputFileName;
-        string name = path.filename().stem().string();
-        replace(name.begin(), name.end(), '.', '_');
-        name = string("g_") + name;
-
+        string name = GetShaderName(blobName);
         outputContext.WriteTextPreamble(name.c_str());
     }
 
     ShaderMake::WriteFileCallback writeFileCallback = useTextOutput
         ? &DataOutputContext::WriteDataAsTextCallback
         : &DataOutputContext::WriteDataAsBinaryCallback;
-    
+
     // Write "blob" header
     if (!ShaderMake::WriteFileHeader(writeFileCallback, &outputContext))
     {
-        Printf(RED "ERROR: Failed to write into output file '%s'!\n", finalOutputFileName.c_str());
+        Printf(RED "ERROR: Failed to write into output file '%s'!\n", outputFile.c_str());
 
         return false;
     }
@@ -1588,51 +1642,47 @@ bool CreateBlob(const string& finalOutputFileName, const vector<BlobEntry>& entr
     // Collect individual permutations
     for (const BlobEntry& entry : entries)
     {
-        // Open compiled permutation file (source)
-        fs::path temp = entry.compiledPermutationFileWithoutExt;
-        temp += g_OutputExt;
-        string file = PathToString(temp);
-
-        FILE* inputStream = fopen(file.c_str(), "rb");
-        if (!inputStream)
+        // Open compiled permutation file
+        string file = entry.permutationFileWithoutExt + g_OutputExt;
+        FILE* sourceStream = fopen(file.c_str(), "rb");
+        if (!sourceStream)
         {
             Printf(RED "ERROR: Can't open file source '%s'!\n", file.c_str());
 
             return false;
         }
 
-        // Get permutation file size
-        uint32_t fileSize = GetFileLength(inputStream);
+        uint32_t sourceSize = GetFileLength(sourceStream);
 
         // Warn if the file is suspiciously large
-        if (fileSize > (64 << 20)) // > 64Mb
+        if (sourceSize > (64 << 20)) // > 64Mb
             Printf(YELLOW "WARNING: Binary file '%s' is too large!\n", file.c_str());
 
         // Allocate memory foe the whole file
-        void* buffer = malloc(fileSize);
+        void* buffer = malloc(sourceSize);
         if (buffer)
         {
             // Read the source file
-            size_t bytesRead = fread(buffer, 1, fileSize, inputStream);
-            if (bytesRead == fileSize)
+            size_t bytesRead = fread(buffer, 1, sourceSize, sourceStream);
+            if (bytesRead == sourceSize)
             {
-                if (!ShaderMake::WritePermutation(writeFileCallback, &outputContext, entry.permutation, buffer, fileSize))
+                if (!ShaderMake::WritePermutation(writeFileCallback, &outputContext, entry.combinedDefines, buffer, sourceSize))
                 {
-                    Printf(RED "ERROR: Failed to write a shader permutation into '%s'!\n", finalOutputFileName.c_str());
+                    Printf(RED "ERROR: Failed to write a shader permutation into '%s'!\n", outputFile.c_str());
                     success = false;
                 }
             }
             else
             {
-                Printf(RED "ERROR: Failed to read %llu bytes from '%s'!\n", fileSize, file.c_str());
+                Printf(RED "ERROR: Failed to read %llu bytes from '%s'!\n", sourceSize, file.c_str());
                 success = false;
             }
 
             free(buffer);
         }
-        else if (fileSize)
+        else if (sourceSize)
         {
-            Printf(RED "ERROR: Can't allocate %u bytes!\n", fileSize);
+            Printf(RED "ERROR: Can't allocate %u bytes!\n", sourceSize);
             success = false;
         }
         else
@@ -1641,19 +1691,25 @@ bool CreateBlob(const string& finalOutputFileName, const vector<BlobEntry>& entr
             success = false;
         }
 
-        fclose(inputStream);
+        fclose(sourceStream);
 
         if (!success)
             break;
-
-        if (!g_Options.keep)
-            fs::remove(file);
     }
 
     if (useTextOutput)
         outputContext.WriteTextEpilog();
 
     return success;
+}
+
+void RemoveIntermediateBlobFiles(const vector<BlobEntry>& entries)
+{
+    for (const BlobEntry& entry : entries)
+    {
+        string file = entry.permutationFileWithoutExt + g_OutputExt;
+        fs::remove(file);
+    }
 }
 
 void SignalHandler(int32_t sig)
@@ -1697,18 +1753,15 @@ int32_t main(int32_t argc, const char** argv)
     }
 
 #ifdef _WIN32
-    if (g_Options.compiler)
-    {
-        // Setup a directory where to look for "dxcompiler" first
-        fs::path compilerDir = fs::path(g_Options.compiler).parent_path();
-        if (g_Options.platform != DXBC && compilerDir != "")
-            SetDllDirectoryA(compilerDir.string().c_str());
-    }
+    // Setup a directory where to look for "dxcompiler" first
+    fs::path compilerDir = fs::path(g_Options.compiler).parent_path();
+    if (g_Options.platform != DXBC && compilerDir != "")
+        SetDllDirectoryA(compilerDir.string().c_str());
 #endif
 
     { // Gather shader permutations
-        fs::file_time_type configWriteTime = fs::last_write_time(g_Options.configFile);
-        configWriteTime = max(configWriteTime, fs::last_write_time(self));
+        fs::file_time_type configTime = fs::last_write_time(g_Options.configFile);
+        configTime = max(configTime, fs::last_write_time(self));
 
         ifstream configStream(g_Options.configFile);
 
@@ -1758,7 +1811,7 @@ int32_t main(int32_t argc, const char** argv)
             }
             else if (blocks.back())
             {
-                if (!ExpandPermutations(lineIndex, line, configWriteTime))
+                if (!ExpandPermutations(lineIndex, line, configTime))
                     return 1;
             }
         }
@@ -1767,8 +1820,7 @@ int32_t main(int32_t argc, const char** argv)
     // Process tasks
     if (!g_TaskData.empty())
     {
-        if (g_Options.compiler)
-            Printf(WHITE "Compiler: %s\n", g_Options.compiler);
+        Printf(WHITE "Using compiler: %s\n", g_Options.compiler);
 
         g_OriginalTaskCount = (uint32_t)g_TaskData.size();
         g_ProcessedTaskCount = 0;
@@ -1793,13 +1845,24 @@ int32_t main(int32_t argc, const char** argv)
             threads[i].join();
 
         // Dump shader blobs
-        if (g_Options.blob && g_FailedTaskCount == 0)
+        for (const auto& it : g_ShaderBlobs)
         {
-            for (const auto& it : g_ShaderBlobs)
+            if (g_Options.binaryBlob)
             {
-                if (!CreateBlob(it.first, it.second))
+                bool result = CreateBlob(it.first, it.second, false);
+                if (!result && !g_Options.continueOnError)
                     return 1;
             }
+
+            if (g_Options.headerBlob)
+            {
+                bool result = CreateBlob(it.first, it.second, true);
+                if (!result && !g_Options.continueOnError)
+                    return 1;
+            }
+
+            if (!g_Options.binary)
+                RemoveIntermediateBlobFiles(it.second);
         }
 
         // Report failed tasks
