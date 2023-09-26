@@ -100,10 +100,10 @@ struct Options
     bool flatten = false;
     bool force = false;
     bool help = false;
-    bool isBinaryNeeded = false;
-    bool isHeaderNeeded = false;
-    bool isBlobNeeded = false;
-    bool keepIntermediates = false;
+    bool binary = false;
+    bool header = false;
+    bool blob = false;
+    bool keep = false;
     bool continueOnError = false;
     bool warningsAreErrors = false;
     bool allResourcesBound = false;
@@ -417,7 +417,7 @@ void DumpBinaryOrHeader(const TaskData& taskData, const uint8_t* data, size_t da
 {
     string outputFile = taskData.outputFileWithoutExt + g_OutputExt;
     
-    bool useTextOutput = g_Options.isHeaderNeeded && !g_Options.isBlobNeeded;
+    bool useTextOutput = g_Options.header && !g_Options.blob;
     if (useTextOutput)
         outputFile += ".h";
 
@@ -438,9 +438,7 @@ void DumpBinaryOrHeader(const TaskData& taskData, const uint8_t* data, size_t da
         context.WriteTextEpilog();
     }
     else
-    {
         context.WriteDataAsBinary(data, dataSize);
-    }
 }
 
 void UpdateProgress(const TaskData& taskData, bool isSucceeded, const char* message)
@@ -547,9 +545,9 @@ bool Options::Parse(int32_t argc, const char** argv)
             OPT_STRING('p', "platform", &platformName, "DXBC, DXIL or SPIRV", nullptr, 0, 0),
             OPT_STRING('c', "config", &config, "Configuration file with the list of shaders to compile", nullptr, 0, 0),
             OPT_STRING('o', "out", &outputDir, "Output directory", nullptr, 0, 0),
-            OPT_BOOLEAN(0, "binary", &isBinaryNeeded, "Output native binary files", nullptr, 0, 0),
-            OPT_BOOLEAN(0, "header", &isHeaderNeeded, "Output header files", nullptr, 0, 0),
-            OPT_BOOLEAN(0, "blob", &isBlobNeeded, "Output shader blob files", nullptr, 0, 0),
+            OPT_BOOLEAN(0, "binary", &binary, "Output native binary files", nullptr, 0, 0),
+            OPT_BOOLEAN(0, "header", &header, "Output header files", nullptr, 0, 0),
+            OPT_BOOLEAN(0, "blob", &blob, "Output shader blob files", nullptr, 0, 0),
             OPT_STRING(0, "compiler", &compiler, "Path to a specific FXC/DXC compiler", nullptr, 0, 0),
         OPT_GROUP("Compiler settings:"),
             OPT_STRING('m', "shaderModel", &shaderModel, "Shader model for DXIL/SPIRV (always SM 5.0 for DXBC)", nullptr, 0, 0),
@@ -571,7 +569,7 @@ bool Options::Parse(int32_t argc, const char** argv)
             OPT_BOOLEAN(0, "serial", &serial, "Disable multi-threading", nullptr, 0, 0),
             OPT_BOOLEAN(0, "flatten", &flatten, "Flatten source directory structure in the output directory", nullptr, 0, 0),
             OPT_BOOLEAN(0, "continue", &continueOnError, "Continue compilation if an error is occured", nullptr, 0, 0),
-            OPT_BOOLEAN(0, "keep", &keepIntermediates, "Don't delete intermediate binary files when creating blobs", nullptr, 0, 0),
+            OPT_BOOLEAN(0, "keep", &keep, "Keep binary files when creating blobs", nullptr, 0, 0),
 #ifdef _WIN32
             OPT_BOOLEAN(0, "useAPI", &useAPI, "Use FXC (d3dcompiler) or DXC (dxcompiler) API explicitly (Windows only)", nullptr, 0, 0),
 #endif
@@ -617,13 +615,13 @@ bool Options::Parse(int32_t argc, const char** argv)
         return false;
     }
 
-    if (!isBinaryNeeded && !isHeaderNeeded)
+    if (!binary && !header)
     {
         Printf(RED "ERROR: One of 'binary' and 'header' must be set!\n");
         return false;
     }
 
-    if (isBinaryNeeded && isHeaderNeeded)
+    if (binary && header)
     {
         Printf(RED "ERROR: Both 'binary' and 'header' cannot be used at the same time!\n");
         return false;
@@ -1207,11 +1205,9 @@ void ExeCompile()
 
             // Output file
             string outputFile = taskData.outputFileWithoutExt + g_OutputExt;
-            if (g_Options.isBinaryNeeded || g_Options.isBlobNeeded)
-            {
+            if (g_Options.binary || g_Options.blob)
                 cmd << " -Fo " << EscapePath(outputFile);
-            }
-            else if (g_Options.isHeaderNeeded)
+            else if (g_Options.header)
             {
                 fs::path path = taskData.outputFileWithoutExt;
                 string name = path.filename().string();
@@ -1480,12 +1476,12 @@ bool ProcessConfigLine(uint32_t lineIndex, const string& line, const fs::file_ti
 
     // Construct output file name
     fs::path finalOutputFile = destDir;
-    if (g_Options.isBlobNeeded)
+    if (g_Options.blob)
         finalOutputFile /= compiledName;
     else
         finalOutputFile /= compiledPermutation;
     finalOutputFile += g_OutputExt;
-    if (g_Options.isHeaderNeeded)
+    if (g_Options.header)
         finalOutputFile += ".h";
 
     // If output is available, update modification time heirarchically
@@ -1518,7 +1514,7 @@ bool ProcessConfigLine(uint32_t lineIndex, const string& line, const fs::file_ti
     taskData.optimizationLevel = optimizationLevel;
 
     // Gather blobs
-    if (g_Options.isBlobNeeded && !configLine.defines.empty()) // TODO: should we allow blobs with 1 permutation only?
+    if (g_Options.blob && !configLine.defines.empty()) // TODO: should we allow blobs with 1 permutation only?
     {
         BlobEntry entry;
         entry.compiledPermutationFileWithoutExt = compiledPermutationFileWithoutExt;
@@ -1566,7 +1562,7 @@ bool ExpandPermutations(uint32_t lineIndex, const string& line, const fs::file_t
 
 bool CreateBlob(const string& finalOutputFileName, const vector<BlobEntry>& entries)
 {
-    const bool useTextOutput = g_Options.isHeaderNeeded;
+    const bool useTextOutput = g_Options.header;
 
     // Create output file
     DataOutputContext outputContext(finalOutputFileName.c_str(), useTextOutput);
@@ -1663,7 +1659,7 @@ bool CreateBlob(const string& finalOutputFileName, const vector<BlobEntry>& entr
         if (!success)
             break;
 
-        if (!g_Options.keepIntermediates)
+        if (!g_Options.keep)
             fs::remove(file);
     }
 
@@ -1812,7 +1808,7 @@ int32_t main(int32_t argc, const char** argv)
             threads[i].join();
 
         // Dump shader blobs
-        if (g_Options.isBlobNeeded && g_FailedTaskCount == 0)
+        if (g_Options.blob && g_FailedTaskCount == 0)
         {
             for (const auto& it : g_ShaderBlobs)
             {

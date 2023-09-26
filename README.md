@@ -59,6 +59,7 @@ Other options:
 - `--serial` - Disable multi-threading
 - `--flatten` - Flatten source directory structure in the output directory
 - `--continue` - Continue compilation if an error is occured
+- `--keep`- Keep binary files when creating blobs
 - `--useAPI` - Use *FXC (d3dcompiler)* or *DXC (dxcompiler)* API explicitly (Windows only)
 - `--colorize` - Colorize console output
 - `--verbose` - Print commands before they are executed
