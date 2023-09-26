@@ -551,7 +551,7 @@ bool Options::Parse(int32_t argc, const char** argv)
             OPT_BOOLEAN('h', "header", &header, "Output header files", nullptr, 0, 0),
             OPT_BOOLEAN('B', "binaryBlob", &binaryBlob, "Output binary blob files", nullptr, 0, 0),
             OPT_BOOLEAN('H', "headerBlob", &headerBlob, "Output header blob files", nullptr, 0, 0),
-            OPT_STRING(0, "compiler", &compiler, "Path to a specific FXC/DXC compiler", nullptr, 0, 0),
+            OPT_STRING(0, "compiler", &compiler, "Path to a FXC/DXC compiler", nullptr, 0, 0),
         OPT_GROUP("Compiler settings:"),
             OPT_STRING('m', "shaderModel", &shaderModel, "Shader model for DXIL/SPIRV (always SM 5.0 for DXBC)", nullptr, 0, 0),
             OPT_INTEGER('O', "optimization", &optimizationLevel, "Optimization level 0-3 (default = 3, disabled = 0)", nullptr, 0, 0),

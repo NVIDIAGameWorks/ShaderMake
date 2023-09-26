@@ -32,10 +32,11 @@ Required options:
 - `-p, --platform=<str>` - DXBC, DXIL or SPIRV
 - `-c, --config=<str>` - Configuration file with the list of shaders to compile
 - `-o, --out=<str>` - Output directory
-- `--binary` - Output native binary files
-- `--header` - Output header files
-- `--blob` - Output shader blob files
-- `--compiler=<str>` - Path to a specific FXC/DXC compiler
+- `-b, --binary` - Output binary files
+- `-h, --header` - Output header files
+- `-B, --binaryBlob` - Output binary blob files
+- `-H, --headerBlob` - Output header blob files
+- `--compiler=<str>` - Path to a FXC/DXC compiler
 
 Compiler settings:
 - `-m, --shaderModel=<str>` - Shader model for DXIL/SPIRV (always SM 5.0 for DXBC)
@@ -59,7 +60,6 @@ Other options:
 - `--serial` - Disable multi-threading
 - `--flatten` - Flatten source directory structure in the output directory
 - `--continue` - Continue compilation if an error is occured
-- `--keep`- Keep binary files when creating blobs
 - `--useAPI` - Use *FXC (d3dcompiler)* or *DXC (dxcompiler)* API explicitly (Windows only)
 - `--colorize` - Colorize console output
 - `--verbose` - Print commands before they are executed
