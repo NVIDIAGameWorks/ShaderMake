@@ -344,9 +344,7 @@ public:
     FILE* file = nullptr;
 
     DataOutputContext(const char* fileName, bool textMode)
-    {
-        file = fopen(fileName, textMode ? "w": "wb");
-    }
+    { file = fopen(fileName, textMode ? "w": "wb"); }
 
     ~DataOutputContext()
     {
@@ -355,16 +353,6 @@ public:
             fclose(file);
             file = nullptr;
         }
-    }
-
-    void WriteTextPreamble(const char* symbolName)
-    {
-        fprintf(file, "const uint8_t %s[] = {", symbolName);
-    }
-
-    void WriteTextEpilog()
-    {
-        fprintf(file, "\n};\n");
     }
 
     bool WriteDataAsText(const void* data, size_t size)
@@ -392,22 +380,21 @@ public:
         return true;
     }
 
+    void WriteTextPreamble(const char* symbolName)
+    { fprintf(file, "const uint8_t %s[] = {", symbolName); }
+
+    void WriteTextEpilog()
+    { fprintf(file, "\n};\n"); }
+
     bool WriteDataAsBinary(const void* data, size_t size)
-    {
-        return fwrite(data, size, 1, file) == 1;
-    }
+    { return fwrite(data, size, 1, file) == 1; }
 
     // For use as a callback in ShaderMake::WriteFileHeader and WritePermutation functions
     static bool WriteDataAsTextCallback(const void* data, size_t size, void* context)
-    {
-        return ((DataOutputContext*)context)->WriteDataAsText(data, size);
-    }
+    { return ((DataOutputContext*)context)->WriteDataAsText(data, size); }
 
-    // For use as a callback in ShaderMake::WriteFileHeader and WritePermutation functions
     static bool WriteDataAsBinaryCallback(const void* data, size_t size, void* context)
-    {
-        return ((DataOutputContext*)context)->WriteDataAsBinary(data, size);
-    }
+    { return ((DataOutputContext*)context)->WriteDataAsBinary(data, size); }
 
 private:
     uint32_t m_lineLength = 129;
@@ -450,7 +437,7 @@ void UpdateProgress(const TaskData& taskData, bool isSucceeded, const char* mess
 
         if (message)
         {
-            Printf(YELLOW "[%5.1f%%] %s %s {%s} {%s}\n%s" WHITE,
+            Printf(YELLOW "[%5.1f%%] %s %s {%s} {%s}\n%s",
                 progress, g_Options.platformName,
                 taskData.source.c_str(),
                 taskData.entryPoint.c_str(),
@@ -468,7 +455,7 @@ void UpdateProgress(const TaskData& taskData, bool isSucceeded, const char* mess
     }
     else
     {
-        Printf(RED "[ FAIL ] %s %s {%s} {%s}\n%s" WHITE,
+        Printf(RED "[ FAIL ] %s %s {%s} {%s}\n%s",
             g_Options.platformName,
             taskData.source.c_str(),
             taskData.entryPoint.c_str(),
@@ -1101,7 +1088,7 @@ void DxcCompile()
                     cmd << L" ";
                 }
 
-                Printf("%ls\n", cmd.str().c_str());
+                Printf(WHITE "%ls\n", cmd.str().c_str());
             }
 
             // Now that args are finalized, get their C-string pointers into a vector
@@ -1295,7 +1282,7 @@ void ExeCompile()
 
         // Debug output
         if (g_Options.verbose)
-            Printf("%s\n", cmd.str().c_str());
+            Printf(WHITE "%s\n", cmd.str().c_str());
 
         // Compiling the shader
         ostringstream msg;
@@ -1341,9 +1328,9 @@ bool GetHierarchicalUpdateTime(const fs::path& file, list<fs::path>& callStack, 
     ifstream stream(file);
     if (!stream.is_open())
     {
-        Printf(RED "ERROR: Can't open file '%s', included in:\n" WHITE, PathToString(file).c_str());
+        Printf(RED "ERROR: Can't open file '%s', included in:\n", PathToString(file).c_str());
         for (const fs::path& otherFile : callStack)
-            Printf(RED "\t%s\n" WHITE, PathToString(otherFile).c_str());
+            Printf(RED "\t%s\n", PathToString(otherFile).c_str());
 
         return false;
     }
@@ -1383,9 +1370,9 @@ bool GetHierarchicalUpdateTime(const fs::path& file, list<fs::path>& callStack, 
 
         if (!isFound)
         {
-            Printf(RED "ERROR: Can't find include file '%s', included in:\n" WHITE, PathToString(includeName).c_str());
+            Printf(RED "ERROR: Can't find include file '%s', included in:\n", PathToString(includeName).c_str());
             for (const fs::path& otherFile : callStack)
-                Printf(RED "\t%s\n" WHITE, PathToString(otherFile).c_str());
+                Printf(RED "\t%s\n", PathToString(otherFile).c_str());
 
             return false;
         }
@@ -1416,7 +1403,7 @@ bool ProcessConfigLine(uint32_t lineIndex, const string& line, const fs::file_ti
     ConfigLine configLine;
     if (!configLine.Parse((int32_t)tokens.size(), tokens.data()))
     {
-        Printf(RED "%s(%u,0): ERROR: Can't parse config line!\n" WHITE, PathToString(g_Options.configFile).c_str(), lineIndex + 1);
+        Printf(RED "%s(%u,0): ERROR: Can't parse config line!\n", PathToString(g_Options.configFile).c_str(), lineIndex + 1);
 
         return false;
     }
@@ -1536,7 +1523,7 @@ bool ExpandPermutations(uint32_t lineIndex, const string& line, const fs::file_t
     size_t closing = line.find('}', opening);
     if (closing == string::npos)
     {
-        Printf(RED "%s(%u,0): ERROR: Missing '}'!\n" WHITE, PathToString(g_Options.configFile).c_str(), lineIndex + 1);
+        Printf(RED "%s(%u,0): ERROR: Missing '}'!\n", PathToString(g_Options.configFile).c_str(), lineIndex + 1);
 
         return false;
     }
@@ -1569,7 +1556,7 @@ bool CreateBlob(const string& finalOutputFileName, const vector<BlobEntry>& entr
 
     if (!outputContext.file)
     {
-        Printf(RED "ERROR: Can't open output file '%s'!\n" WHITE, finalOutputFileName.c_str());
+        Printf(RED "ERROR: Can't open output file '%s'!\n", finalOutputFileName.c_str());
 
         return false;
     }
@@ -1591,7 +1578,7 @@ bool CreateBlob(const string& finalOutputFileName, const vector<BlobEntry>& entr
     // Write "blob" header
     if (!ShaderMake::WriteFileHeader(writeFileCallback, &outputContext))
     {
-        Printf(RED "ERROR: Failed to write into output file '%s'!\n" WHITE, finalOutputFileName.c_str());
+        Printf(RED "ERROR: Failed to write into output file '%s'!\n", finalOutputFileName.c_str());
 
         return false;
     }
@@ -1609,7 +1596,7 @@ bool CreateBlob(const string& finalOutputFileName, const vector<BlobEntry>& entr
         FILE* inputStream = fopen(file.c_str(), "rb");
         if (!inputStream)
         {
-            Printf(RED "ERROR: Can't open file source '%s'!\n" WHITE, file.c_str());
+            Printf(RED "ERROR: Can't open file source '%s'!\n", file.c_str());
 
             return false;
         }
@@ -1619,7 +1606,7 @@ bool CreateBlob(const string& finalOutputFileName, const vector<BlobEntry>& entr
 
         // Warn if the file is suspiciously large
         if (fileSize > (64 << 20)) // > 64Mb
-            Printf(YELLOW "WARNING: Binary file '%s' is too large!\n" WHITE, file.c_str());
+            Printf(YELLOW "WARNING: Binary file '%s' is too large!\n", file.c_str());
 
         // Allocate memory foe the whole file
         void* buffer = malloc(fileSize);
@@ -1631,13 +1618,13 @@ bool CreateBlob(const string& finalOutputFileName, const vector<BlobEntry>& entr
             {
                 if (!ShaderMake::WritePermutation(writeFileCallback, &outputContext, entry.permutation, buffer, fileSize))
                 {
-                    Printf(YELLOW "ERROR: Failed to write a shader permutation into '%s'!\n", finalOutputFileName.c_str());
+                    Printf(RED "ERROR: Failed to write a shader permutation into '%s'!\n", finalOutputFileName.c_str());
                     success = false;
                 }
             }
             else
             {
-                Printf(YELLOW "ERROR: Failed to read %llu bytes from '%s'!\n", fileSize, file.c_str());
+                Printf(RED "ERROR: Failed to read %llu bytes from '%s'!\n", fileSize, file.c_str());
                 success = false;
             }
 
@@ -1645,12 +1632,12 @@ bool CreateBlob(const string& finalOutputFileName, const vector<BlobEntry>& entr
         }
         else if (fileSize)
         {
-            Printf(YELLOW "ERROR: Can't allocate %u bytes!\n" WHITE, fileSize);
+            Printf(RED "ERROR: Can't allocate %u bytes!\n", fileSize);
             success = false;
         }
         else
         {
-            Printf(YELLOW "ERROR: Binary file '%s' is empty!\n" WHITE, file.c_str());
+            Printf(RED "ERROR: Binary file '%s' is empty!\n", file.c_str());
             success = false;
         }
 
@@ -1664,9 +1651,7 @@ bool CreateBlob(const string& finalOutputFileName, const vector<BlobEntry>& entr
     }
 
     if (useTextOutput)
-    {
         outputContext.WriteTextEpilog();
-    }
 
     return success;
 }
@@ -1677,7 +1662,7 @@ void SignalHandler(int32_t sig)
 
     g_Terminate = true;
 
-    Printf(YELLOW "Aborting...\n");
+    Printf(RED "Aborting...\n");
 }
 
 int32_t main(int32_t argc, const char** argv)
@@ -1760,14 +1745,14 @@ int32_t main(int32_t argc, const char** argv)
             else if (line.find("#endif") != string::npos)
             {
                 if (blocks.size() == 1)
-                    Printf(RED "%s(%u,0): ERROR: Unexpected '#endif'!\n" WHITE, PathToString(g_Options.configFile).c_str(), lineIndex + 1);
+                    Printf(RED "%s(%u,0): ERROR: Unexpected '#endif'!\n", PathToString(g_Options.configFile).c_str(), lineIndex + 1);
                 else
                     blocks.pop_back();
             }
             else if (line.find("#else") != string::npos)
             {
                 if (blocks.size() < 2)
-                    Printf(RED "%s(%u,0): ERROR: Unexpected '#else'!\n" WHITE, PathToString(g_Options.configFile).c_str(), lineIndex + 1);
+                    Printf(RED "%s(%u,0): ERROR: Unexpected '#else'!\n", PathToString(g_Options.configFile).c_str(), lineIndex + 1);
                 else if (blocks[blocks.size() - 2])
                     blocks.back() = !blocks.back();
             }
@@ -1783,7 +1768,7 @@ int32_t main(int32_t argc, const char** argv)
     if (!g_TaskData.empty())
     {
         if (g_Options.compiler)
-            Printf(GRAY "Compiler: %s\n", g_Options.compiler);
+            Printf(WHITE "Compiler: %s\n", g_Options.compiler);
 
         g_OriginalTaskCount = (uint32_t)g_TaskData.size();
         g_ProcessedTaskCount = 0;
@@ -1819,15 +1804,15 @@ int32_t main(int32_t argc, const char** argv)
 
         // Report failed tasks
         if (g_FailedTaskCount)
-            Printf(YELLOW "WARNING: %u task(s) failed to complete!\n" WHITE, g_FailedTaskCount.load());
+            Printf(YELLOW "WARNING: %u task(s) failed to complete!\n", g_FailedTaskCount.load());
         else
-            Printf("%d task(s) completed successfully.\n", g_OriginalTaskCount);
+            Printf(WHITE "%d task(s) completed successfully.\n", g_OriginalTaskCount);
 
         uint64_t end = Timer_GetTicks();
-        Printf("Elapsed time %.2f ms\n\n", Timer_ConvertTicksToMilliseconds(end - start));
+        Printf(WHITE "Elapsed time %.2f ms\n\n", Timer_ConvertTicksToMilliseconds(end - start));
     }
     else
-        Printf("All %s shaders are up to date.\n", g_Options.platformName);
+        Printf(WHITE "All %s shaders are up to date.\n", g_Options.platformName);
 
     return (g_Terminate || g_FailedTaskCount) ? 1 : 0;
 }
