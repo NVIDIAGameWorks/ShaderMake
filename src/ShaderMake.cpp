@@ -315,7 +315,8 @@ void Printf(const char* format, ...)
     va_list argptr;
     va_start(argptr, format);
 
-    char fixedFormat[512];
+    // Remove embedded colors if colorization is off
+    char fixedFormat[1024]; // TODO: let's assume that we always fit
     if (!g_Options.colorize)
     {
         const char* in = format;
@@ -333,8 +334,13 @@ void Printf(const char* format, ...)
         format = fixedFormat;
     }
 
+    // Print
     vprintf(format, argptr);
     va_end(argptr);
+
+    // Restore default color if colorization is on
+    if (g_Options.colorize)
+        printf(WHITE);
 
     // IMPORTANT: needed only if being run in CMake environment
     fflush(stdout);
