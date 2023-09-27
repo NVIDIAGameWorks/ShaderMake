@@ -1922,7 +1922,7 @@ int32_t main(int32_t argc, const char** argv)
             Printf(WHITE "%d task(s) completed successfully.\n", g_OriginalTaskCount);
 
         uint64_t end = Timer_GetTicks();
-        Printf(WHITE "Elapsed time %.2f ms\n\n", Timer_ConvertTicksToMilliseconds(end - start));
+        Printf(WHITE "Elapsed time %.2f ms\n", Timer_ConvertTicksToMilliseconds(end - start));
     }
     else
         Printf(WHITE "All %s shaders are up to date.\n", g_Options.platformName);
