@@ -454,8 +454,7 @@ void UpdateProgress(const TaskData& taskData, bool isSucceeded, const char* mess
     {
         float progress = 100.0f * float(++g_ProcessedTaskCount) / float(g_OriginalTaskCount);
 
-        // DXC from Win SDK is always outdated. DXC from VK SDK doesn't sign. Ignore warning about signing to avoid spam...
-        if (message && !strstr(message, "DXIL signing library"))
+        if (message)
         {
             Printf(YELLOW "[%5.1f%%] %s %s {%s} {%s}\n%s",
                 progress, g_Options.platformName,
