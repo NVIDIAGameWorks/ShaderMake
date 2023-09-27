@@ -759,15 +759,13 @@ void TokenizeDefineStrings(vector<string>& in, vector<D3D_SHADER_MACRO>& out)
 class FxcIncluder : public ID3DInclude
 {
 public:
-    FxcIncluder(const wchar_t* file)
+    FxcIncluder(const fs::path& sourceFile)
     {
-        baseDir = fs::path(file).parent_path();
-
         includeDirs.reserve(g_Options.includeDirs.size() + 8);
+
+        includeDirs.push_back(sourceFile.parent_path());
         for (const fs::path& path : g_Options.includeDirs)
             includeDirs.push_back(path);
-
-        includeDirs.push_back(baseDir);
     }
 
     ~FxcIncluder()
@@ -775,42 +773,50 @@ public:
 
     STDMETHOD(Open)(THIS_ D3D_INCLUDE_TYPE includeType, LPCSTR pFileName, LPCVOID pParentData, LPCVOID *ppData, UINT *pBytes)
     {
+        // TODO: an error in an include file gets reported using relative path with recent WinSDKs, what makes it 
+        // "unclickable" from the Visual Studio output window. It doesn't look like an issue of "FxcIncluder",
+        // because the issue is here even with "D3D_COMPILE_STANDARD_FILE_INCLUDE", but "FXC.exe" works fine.
+
         UNUSED(includeType);
         UNUSED(pParentData);
 
         *ppData = 0;
         *pBytes = 0;
 
-        // Load file
+        // Find file
         fs::path name = fs::path(pFileName);
-        for (const fs::path& currentPath : includeDirs)
+        fs::path file = name;
+        if (file.is_relative())
         {
-            fs::path file = currentPath / name;
-
-            FILE* stream = fopen(file.string().c_str(), "rb");
-            if (stream)
+            for (const fs::path& path : includeDirs)
             {
-                // Add the path to this file to the current include stack so that any sub-includes would be relative to this path
-                fs::path path = file.parent_path().lexically_normal();
-                includeDirs.push_back(path);
-
-                uint32_t len = GetFileLength(stream);
-
-                char* buf = (char*)malloc(len);
-                if (!buf)
-                    return E_FAIL;
-
-                fread(buf, 1, len, stream);
-                fclose(stream);
-
-                *ppData = buf;
-                *pBytes = len;
-
-                return S_OK;
+                file = path / name;
+                if (fs::exists(file))
+                    break;
             }
         }
 
-        return E_FAIL;
+        // Open file
+        FILE* stream = fopen(file.string().c_str(), "rb");
+        if (!stream)
+            return E_FAIL;
+
+        // Load file
+        uint32_t len = GetFileLength(stream);
+        char* buf = (char*)malloc(len);
+        if (!buf)
+            return E_FAIL;
+
+        fread(buf, 1, len, stream);
+        fclose(stream);
+
+        *ppData = buf;
+        *pBytes = len;
+
+        // Add the path to this file to the current include stack so that any sub-includes would be relative to this path
+        includeDirs.push_back(file.parent_path());
+
+        return S_OK;
     }
 
     STDMETHOD(Close)(THIS_ LPCVOID pData)
@@ -828,7 +834,6 @@ public:
     }
 
 private:
-    fs::path baseDir;
     vector<fs::path> includeDirs;
 };
 
@@ -873,7 +878,7 @@ void FxcCompile()
         // Compiling the shader
         fs::path sourceFile = g_Options.configFile.parent_path() / g_Options.sourceDir / taskData.source;
 
-        FxcIncluder fxcIncluder(sourceFile.wstring().c_str());
+        FxcIncluder fxcIncluder(sourceFile);
         string profile = taskData.profile + "_5_0";
 
         ComPtr<ID3DBlob> codeBlob;
@@ -1765,10 +1770,9 @@ int32_t main(int32_t argc, const char** argv)
     }
 
 #ifdef _WIN32
-    // Setup a directory where to look for "dxcompiler" first
-    fs::path compilerDir = fs::path(g_Options.compiler).parent_path();
-    if (g_Options.platform != DXBC && compilerDir != "")
-        SetDllDirectoryA(compilerDir.string().c_str());
+    // Setup a directory where to look for the compiler first
+    fs::path compilerPath = fs::path(g_Options.compiler).parent_path();
+    SetDllDirectoryA(compilerPath.string().c_str());
 #endif
 
     { // Gather shader permutations
