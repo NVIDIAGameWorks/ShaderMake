@@ -582,9 +582,7 @@ bool Options::Parse(int32_t argc, const char** argv)
             OPT_BOOLEAN(0, "serial", &serial, "Disable multi-threading", nullptr, 0, 0),
             OPT_BOOLEAN(0, "flatten", &flatten, "Flatten source directory structure in the output directory", nullptr, 0, 0),
             OPT_BOOLEAN(0, "continue", &continueOnError, "Continue compilation if an error is occured", nullptr, 0, 0),
-#ifdef _WIN32
             OPT_BOOLEAN(0, "useAPI", &useAPI, "Use FXC (d3dcompiler) or DXC (dxcompiler) API explicitly (Windows only)", nullptr, 0, 0),
-#endif
             OPT_BOOLEAN(0, "colorize", &colorize, "Colorize console output", nullptr, 0, 0),
             OPT_BOOLEAN(0, "verbose", &verbose, "Print commands before they are executed", nullptr, 0, 0),
         OPT_GROUP("SPIRV options:"),
@@ -596,6 +594,10 @@ bool Options::Parse(int32_t argc, const char** argv)
             OPT_INTEGER(0, "uRegShift", &uRegShift, "SPIRV: register shift for UAV (u#) resources", nullptr, 0, 0),
         OPT_END(),
     };
+
+#ifndef _WIN32
+    useAPI = false;
+#endif
 
     static const char* usages[] = {
         "ShaderMake.exe -p {DXBC|DXIL|SPIRV} --binary [--header --blob] -c \"path/to/config\"\n"
