@@ -595,10 +595,6 @@ bool Options::Parse(int32_t argc, const char** argv)
         OPT_END(),
     };
 
-#ifndef _WIN32
-    useAPI = false;
-#endif
-
     static const char* usages[] = {
         "ShaderMake.exe -p {DXBC|DXIL|SPIRV} --binary [--header --blob] -c \"path/to/config\"\n"
         "\t-o \"path/to/output\" --compiler \"path/to/compiler\" [other options]\n"
@@ -610,6 +606,10 @@ bool Options::Parse(int32_t argc, const char** argv)
     argparse_init(&argparse, options, usages, 0);
     argparse_describe(&argparse, nullptr, "\nMulti-threaded shader compiling & processing tool");
     argparse_parse(&argparse, argc, argv);
+    
+#ifndef _WIN32
+    useAPI = false;
+#endif
 
     if (!config)
     {
