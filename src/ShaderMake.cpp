@@ -431,7 +431,7 @@ void DumpShader(const TaskData& taskData, const uint8_t* data, size_t dataSize)
 {
     string file = taskData.outputFileWithoutExt + g_OutputExt;
 
-    if (g_Options.binary || g_Options.IsBlob())
+    if (g_Options.binary || g_Options.binaryBlob || g_Options.headerBlob && !taskData.combinedDefines.empty())
     {
         DataOutputContext context(file.c_str(), false);
         if (!context.stream)
@@ -440,7 +440,7 @@ void DumpShader(const TaskData& taskData, const uint8_t* data, size_t dataSize)
         context.WriteDataAsBinary(data, dataSize);
     }
 
-    if (g_Options.header)
+    if (g_Options.header || g_Options.headerBlob && taskData.combinedDefines.empty())
     {
         DataOutputContext context((file + ".h").c_str(), true);
         if (!context.stream)
@@ -1224,9 +1224,9 @@ void ExeCompile()
 
             // Output file
             string outputFile = taskData.outputFileWithoutExt + g_OutputExt;
-            if (g_Options.binary || g_Options.IsBlob())
+            if (g_Options.binary || g_Options.binaryBlob || g_Options.headerBlob && !taskData.combinedDefines.empty())
                 cmd << " -Fo " << EscapePath(outputFile);
-            if (g_Options.header)
+            if (g_Options.header || g_Options.headerBlob && taskData.combinedDefines.empty())
             {
                 string name = GetShaderName(taskData.outputFileWithoutExt);
 
