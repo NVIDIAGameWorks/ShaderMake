@@ -29,6 +29,7 @@ THE SOFTWARE.
 #include <stdlib.h>
 #include <string.h>
 #include <assert.h>
+#include <stdbool.h>
 #include <errno.h> // NV: added errno.h, it was missing
 
 #include "argparse.h"
@@ -70,12 +71,12 @@ argparse_getvalue(struct argparse* self, const struct argparse_option* opt, int 
 
     switch (opt->type) {
         case ARGPARSE_OPT_BOOLEAN:
+            // NV: replaced the original logic that was casting these flags to 'int' and testing their sign
+            // with this version that casts them to 'bool' to make it compatible with bool variables in C++.
             if (flags & OPT_UNSET)
-                *(int*)opt->value = *(int*)opt->value - 1;
+                *(bool*)opt->value = false;
             else
-                *(int*)opt->value = *(int*)opt->value + 1;
-            if (*(int*)opt->value < 0)
-                *(int*)opt->value = 0;
+                *(bool*)opt->value = true;
             break;
         case ARGPARSE_OPT_BIT:
             if (flags & OPT_UNSET)
