@@ -29,7 +29,21 @@ set (CMAKE_C_STANDARD 99)
 
 if (MSVC)
     set (CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
-endif ()
+
+    # Test the Windows SDK version to make sure that we can compile ShaderMake.
+    # ShaderMake uses some relatively new APIs for DXC, and there's no straightforward way to test
+    # if they're declared in the SDK headers. So, test it here to prevent obscure errors.
+    set(_MIN_WINDOWS_SDK_VERSION_BUILD 20348)
+    string(REGEX MATCH "^10\\.0\\.([0-9]+)\\.[0-9]+$" _WINDOWS_SDK_VERSION "${CMAKE_VS_WINDOWS_TARGET_PLATFORM_VERSION}")
+    if (_WINDOWS_SDK_VERSION)
+        set(_WINDOWS_SDK_VERSION_BUILD "${CMAKE_MATCH_1}")
+        if (_WINDOWS_SDK_VERSION_BUILD LESS _MIN_WINDOWS_SDK_VERSION_BUILD)
+            message(SEND_ERROR "ShaderMake requires Windows SDK version at least 10.0.${_MIN_WINDOWS_SDK_VERSION_BUILD}.0.")
+        endif()
+    else()
+        message(WARNING "ShaderMake: Unknown Windows SDK version '${CMAKE_VS_WINDOWS_TARGET_PLATFORM_VERSION}', errors may occur during build.")
+    endif()
+endif()
 
 # Compile options
 if (${CMAKE_SYSTEM_PROCESSOR} MATCHES "x86_64")

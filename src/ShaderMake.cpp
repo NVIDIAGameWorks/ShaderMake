@@ -37,6 +37,7 @@ THE SOFTWARE.
 #include <csignal>
 #include <cstdarg>
 #include <cstring>
+#include <system_error>
 
 #ifdef _WIN32
     #include <d3dcompiler.h> // FXC
@@ -962,6 +963,8 @@ void FxcCompile()
 void DxcCompile()
 {
     static const wchar_t* optimizationLevelRemap[] = {
+        // Note: if you're getting errors like "error C2065: 'DXC_ARG_SKIP_OPTIMIZATIONS': undeclared identifier" here,
+        // please update the Windows SDK to at least version 10.0.20348.0.
         DXC_ARG_SKIP_OPTIMIZATIONS,
         DXC_ARG_OPTIMIZATION_LEVEL1,
         DXC_ARG_OPTIMIZATION_LEVEL2,
@@ -997,12 +1000,36 @@ void DxcCompile()
     ComPtr<IDxcCompiler3> dxcCompiler;
     HRESULT hr = DxcCreateInstance(CLSID_DxcCompiler, IID_PPV_ARGS(&dxcCompiler));
     if (FAILED(hr))
+    {
+        // Print a message explaining that we cannot compile anything.
+        // This can happen when the user specifies a DXC version that is too old.
+        lock_guard<mutex> guard(g_TaskMutex);
+        static bool once = true;
+        if (once)
+        {
+            Printf(RED "ERROR: Cannot create an instance of IDxcCompiler3, HRESULT = 0x%08x (%s)\n", hr, std::system_category().message(hr).c_str());
+            once = false;
+        }
+        g_Terminate = true;
         return;
+    }
 
     ComPtr<IDxcUtils> dxcUtils;
     hr = DxcCreateInstance(CLSID_DxcUtils, IID_PPV_ARGS(&dxcUtils));
     if (FAILED(hr))
+    {
+        // Also print an error message.
+        // Not sure if this ever happens or all such cases are handled by the condition above, but let's be safe.
+        lock_guard<mutex> guard(g_TaskMutex);
+        static bool once = true;
+        if (once)
+        {
+            Printf(RED "ERROR: Cannot create an instance of IDxcUtils, HRESULT = 0x%08x (%s)\n", hr, std::system_category().message(hr).c_str());
+            once = false;
+        }
+        g_Terminate = true;
         return;
+    }
 
     while (!g_Terminate)
     {
@@ -1866,6 +1893,10 @@ int32_t main(int32_t argc, const char** argv)
 
         for (uint32_t i = 0; i < threadsNum; i++)
             threads[i].join();
+
+        // If a fatal error or a termination request happened, don't proceed to the blob building.
+        if (g_Terminate)
+            return 1;
 
         // Dump shader blobs
         for (const auto& [blobName, blobEntries] : g_ShaderBlobs)
