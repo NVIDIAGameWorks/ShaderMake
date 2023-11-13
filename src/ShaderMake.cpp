@@ -91,6 +91,7 @@ struct Options
     const char* sourceDir = "";
     const char* compiler = nullptr;
     const char* outputExt = nullptr;
+    const char* vulkanMemoryLayout = nullptr;
     uint32_t sRegShift = 100; // must be first (or change "DxcCompile" code)
     uint32_t tRegShift = 200;
     uint32_t bRegShift = 300;
@@ -572,6 +573,7 @@ bool Options::Parse(int32_t argc, const char** argv)
             OPT_BOOLEAN(0, "stripReflection", &stripReflection, "Maps to '-Qstrip_reflect' DXC/FXC option: strip reflection information from a shader binary", nullptr, 0, 0),
             OPT_BOOLEAN(0, "matrixRowMajor", &matrixRowMajor, "Maps to '-Zpr' DXC/FXC option: pack matrices in row-major order", nullptr, 0, 0),
             OPT_BOOLEAN(0, "hlsl2021", &hlsl2021, "Maps to '-HV 2021' DXC option: enable HLSL 2021 standard", nullptr, 0, 0),
+            OPT_STRING(0, "vulkanMemoryLayout", &vulkanMemoryLayout, "Maps to '-fvk-use-<VALUE>-layout' DXC options: dx, gl, scalar", nullptr, 0, 0),
         OPT_GROUP("Defines & include directories:"),
             OPT_STRING('I', "include", &unused, "Include directory(s)", AddInclude, (intptr_t)this, 0),
             OPT_STRING('D', "define", &unused, "Macro definition(s) in forms 'M=value' or 'M'", AddGlobalDefine, (intptr_t)this, 0),
@@ -679,6 +681,22 @@ bool Options::Parse(int32_t argc, const char** argv)
         g_OutputExt = outputExt;
     else
         g_OutputExt = g_PlatformExts[platform];
+
+    if (g_Options.vulkanMemoryLayout && platform != SPIRV)
+    {
+        Printf(RED "ERROR: --vulkanMemoryLayout is only supported for SPIRV target!\n");
+        return false;
+    }
+
+    if (g_Options.vulkanMemoryLayout && 
+        strcmp(g_Options.vulkanMemoryLayout, "dx") != 0 &&
+        strcmp(g_Options.vulkanMemoryLayout, "gl") != 0 && 
+        strcmp(g_Options.vulkanMemoryLayout, "scalar") != 0)
+    {
+        Printf(RED "ERROR: Unsupported value '%s' for --vulkanMemoryLayout! Only 'dx', 'gl' and 'scalar' are supported.\n",
+            g_Options.vulkanMemoryLayout);
+        return false;
+    }
 
     // Absolute path is needed for source files to get "clickable" messages
 #ifdef _WIN32
@@ -1125,6 +1143,9 @@ void DxcCompile()
                 args.push_back(L"-spirv");
                 args.push_back(wstring(L"-fspv-target-env=vulkan") + AnsiToWide(g_Options.vulkanVersion));
 
+                if (g_Options.vulkanMemoryLayout)
+                    args.push_back(wstring(L"-fvk-use-") + AnsiToWide(g_Options.vulkanMemoryLayout) + wstring(L"-layout"));
+
                 for (const string& ext : g_Options.spirvExtensions)
                     args.push_back(wstring(L"-fspv-extension=") + AnsiToWide(ext));
 
@@ -1310,6 +1331,9 @@ void ExeCompile()
                 cmd << " -spirv";
 
                 cmd << " -fspv-target-env=vulkan" << g_Options.vulkanVersion;
+
+                if (g_Options.vulkanMemoryLayout)
+                    cmd << " -fvk-use-" << g_Options.vulkanMemoryLayout << "-layout";
 
                 for (const string& ext : g_Options.spirvExtensions)
                     cmd << " -fspv-extension=" << ext;
