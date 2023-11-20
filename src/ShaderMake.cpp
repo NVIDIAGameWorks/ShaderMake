@@ -1831,6 +1831,33 @@ int32_t main(int32_t argc, const char** argv)
     // Setup a directory where to look for the compiler first
     fs::path compilerPath = fs::path(g_Options.compiler).parent_path();
     SetDllDirectoryA(compilerPath.string().c_str());
+    // This will still leave the launch folder as the first entry in the search path, so
+    // try to explicitly load the appropriate DLL from the correct path
+    if (g_Options.useAPI)
+    {
+        char const* dllName = nullptr;
+        switch (g_Options.platform)
+        {
+        case DXIL:
+        case SPIRV:
+            dllName = "dxcompiler.dll";
+            break;
+        case DXBC:
+            dllName = "d3dcompiler_47.dll";
+            break;
+        default:
+            break;
+        }
+        if (dllName != nullptr)
+        {
+            fs::path dllPath = compilerPath / dllName;
+            if (LoadLibraryA(dllPath.string().c_str()) == NULL)
+            {
+                Printf(RED "ERROR: Failed to load compiler dll: \"%s\"!\n", dllPath.string().c_str());
+                return 1;
+            }
+        }
+    }
 #endif
 
     { // Gather shader permutations
