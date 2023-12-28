@@ -116,6 +116,8 @@ struct Options
     bool verbose = false;
     bool colorize = false;
     bool useAPI = false;
+    bool slang = false;
+    bool noRegShifts = false;
 
     bool Parse(int32_t argc, const char** argv);
 
@@ -162,6 +164,7 @@ atomic<bool> g_Terminate = false;
 atomic<uint32_t> g_FailedTaskCount = 0;
 uint32_t g_OriginalTaskCount;
 const char* g_OutputExt = nullptr;
+bool g_UseSlang = false;
 
 static const char* g_PlatformNames[] = {
     "DXBC",
@@ -173,6 +176,12 @@ static const char* g_PlatformExts[] = {
     ".dxbc",
     ".dxil",
     ".spirv",
+};
+
+static const char* g_PlatformSlangTargets[] = {
+    "dxbc",
+    "dxil",
+    "spirv",
 };
 
 #if 1
@@ -563,7 +572,8 @@ bool Options::Parse(int32_t argc, const char** argv)
             OPT_BOOLEAN('h', "header", &header, "Output header files", nullptr, 0, 0),
             OPT_BOOLEAN('B', "binaryBlob", &binaryBlob, "Output binary blob files", nullptr, 0, 0),
             OPT_BOOLEAN('H', "headerBlob", &headerBlob, "Output header blob files", nullptr, 0, 0),
-            OPT_STRING(0, "compiler", &compiler, "Path to a FXC/DXC compiler", nullptr, 0, 0),
+            OPT_STRING(0, "compiler", &compiler, "Path to a FXC/DXC/Slang compiler executable", nullptr, 0, 0),
+            OPT_BOOLEAN(0, "slang", &slang, "Compiler is Slang", nullptr, 0, 0),
         OPT_GROUP("Compiler settings:"),
             OPT_STRING('m', "shaderModel", &shaderModel, "Shader model for DXIL/SPIRV (always SM 5.0 for DXBC)", nullptr, 0, 0),
             OPT_INTEGER('O', "optimization", &optimizationLevel, "Optimization level 0-3 (default = 3, disabled = 0)", nullptr, 0, 0),
@@ -595,6 +605,7 @@ bool Options::Parse(int32_t argc, const char** argv)
             OPT_INTEGER(0, "tRegShift", &tRegShift, "SPIRV: register shift for texture (t#) resources", nullptr, 0, 0),
             OPT_INTEGER(0, "bRegShift", &bRegShift, "SPIRV: register shift for constant (b#) resources", nullptr, 0, 0),
             OPT_INTEGER(0, "uRegShift", &uRegShift, "SPIRV: register shift for UAV (u#) resources", nullptr, 0, 0),
+            OPT_BOOLEAN(0, "noRegShifts", &noRegShifts, "Don't specify any register shifts for the compiler", nullptr, 0, 0),
         OPT_END(),
     };
 
@@ -653,6 +664,11 @@ bool Options::Parse(int32_t argc, const char** argv)
     {
         Printf(RED "ERROR: Compiler '%s' does not exist!\n", compiler);
         return false;
+    }
+    
+    if (slang && useAPI)
+    {
+        Printf(RED "ERROR: Use of Slang with --useAPI is not implemented.\n");
     }
 
     if (strlen(shaderModel) != 3 || strstr(shaderModel, "."))
@@ -998,19 +1014,22 @@ void DxcCompile()
     };
 
     vector<wstring> regShifts;
-    for (uint32_t reg = 0; reg < 4; reg++)
+    if (!g_Options.noRegShifts)
     {
-        for (uint32_t space = 0; space < SPIRV_SPACES_NUM; space++)
+        for (uint32_t reg = 0; reg < 4; reg++)
         {
-            wchar_t buf[64];
+            for (uint32_t space = 0; space < SPIRV_SPACES_NUM; space++)
+            {
+                wchar_t buf[64];
 
-            regShifts.push_back(regShiftArgs[reg]);
+                regShifts.push_back(regShiftArgs[reg]);
 
-            swprintf(buf, COUNT_OF(buf), L"%u", (&g_Options.sRegShift)[reg]);
-            regShifts.push_back(wstring(buf));
+                swprintf(buf, COUNT_OF(buf), L"%u", (&g_Options.sRegShift)[reg]);
+                regShifts.push_back(wstring(buf));
 
-            swprintf(buf, COUNT_OF(buf), L"%u", space);
-            regShifts.push_back(wstring(buf));
+                swprintf(buf, COUNT_OF(buf), L"%u", space);
+                regShifts.push_back(wstring(buf));
+            }
         }
     }
 
@@ -1235,6 +1254,38 @@ void DxcCompile()
 // EXE
 //=====================================================================================================================
 
+bool ReadBinaryFile(const char* file, vector<uint8_t>& outData)
+{
+    FILE* stream = fopen(file, "rb");
+    if (!stream)
+    {
+        Printf(RED "ERROR: Can't open file '%s'!\n", file);
+        return false;
+    }
+
+    uint32_t const binarySize = GetFileLength(stream);
+    if (binarySize == 0)
+    {
+        Printf(RED "ERROR: Binary file '%s' is empty!\n", file);
+        fclose(stream);
+        return false;
+    }
+
+    // Warn if the file is suspiciously large
+    if (binarySize > (64 << 20)) // > 64Mb
+        Printf(YELLOW "WARNING: Binary file '%s' is too large!\n", file);
+
+    // Allocate memory foe the whole file
+    outData.resize(binarySize);
+
+    // Read the file
+    size_t bytesRead = fread(outData.data(), 1, binarySize, stream);
+    bool success = (bytesRead == binarySize);
+
+    fclose(stream);
+    return success;
+}
+
 void ExeCompile()
 {
     static const char* optimizationLevelRemap[] = {
@@ -1257,106 +1308,179 @@ void ExeCompile()
             g_TaskData.pop_back();
         }
 
+        bool convertBinaryOutputToHeader = false;
+        string outputFile = taskData.outputFileWithoutExt + g_OutputExt;
+
         // Building command line
         ostringstream cmd;
         {
             #ifdef _WIN32 // workaround for Windows
-                cmd << "%COMPILER% -nologo ";
+                cmd << "%COMPILER%";
             #else
-                cmd << "$COMPILER -nologo ";
+                cmd << "$COMPILER";
             #endif
+
+            if (g_Options.slang)
+            {
+                if (g_Options.header || g_Options.headerBlob && taskData.combinedDefines.empty())
+                    convertBinaryOutputToHeader = true;
+                
+                // Profile
+                cmd << " -profile " << taskData.profile << "_" << g_Options.shaderModel;
+                
+                // Target/platform
+                cmd << " -target " << g_PlatformSlangTargets[g_Options.platform];
+
+                // Output
+                cmd << " -o " << EscapePath(outputFile);
+
+                // Entry point
+                cmd << " -entry " << taskData.entryPoint;
+
+                // Defines
+                for (const string& define : taskData.defines)
+                    cmd << " -D " << define;
+
+                for (const string& define : g_Options.defines)
+                    cmd << " -D " << define;
+
+                // Include directories
+                for (const fs::path& dir : g_Options.includeDirs)
+                    cmd << " -I " << EscapePath(dir.string());
+
+                // Optimization level
+                cmd << " -O" << taskData.optimizationLevel;
+
+                // Warnings as errors
+                if (g_Options.warningsAreErrors)
+                    cmd << " -warnings-as-errors";
+
+                // Matrix layout
+                if (g_Options.matrixRowMajor)
+                    cmd << " -matrix-layout-row-major";
+                else
+                    cmd << " -matrix-layout-column-major";
+
+                if (g_Options.platform == SPIRV)
+                {
+                    if (g_Options.vulkanMemoryLayout)
+                    {   
+                        if (strcmp(g_Options.vulkanMemoryLayout, "scalar") == 0)
+                            cmd << " -force-glsl-scalar-layout";
+                        else if (strcmp(g_Options.vulkanMemoryLayout, "gl") == 0)
+                            cmd << " -fvk-use-gl-layout";
+                    }
+                    
+                    if (!g_Options.noRegShifts)
+                    {
+                        for (uint32_t space = 0; space < SPIRV_SPACES_NUM; space++)
+                        {
+                            cmd << " -fvk-s-shift " << g_Options.sRegShift << " " << space;
+                            cmd << " -fvk-t-shift " << g_Options.tRegShift << " " << space;
+                            cmd << " -fvk-b-shift " << g_Options.bRegShift << " " << space;
+                            cmd << " -fvk-u-shift " << g_Options.uRegShift << " " << space;
+                        }
+                    }
+                }
+            }
+            else
+            {
+                cmd << " -nologo";
+
+                // Output file
+                if (g_Options.binary || g_Options.binaryBlob || g_Options.headerBlob && !taskData.combinedDefines.empty())
+                    cmd << " -Fo " << EscapePath(outputFile);
+                if (g_Options.header || g_Options.headerBlob && taskData.combinedDefines.empty())
+                {
+                    string name = GetShaderName(taskData.outputFileWithoutExt);
+
+                    cmd << " -Fh " << EscapePath(outputFile) << ".h";
+                    cmd << " -Vn " << name;
+                }
+
+                // Profile
+                string profile = taskData.profile + "_";
+                if (g_Options.platform == DXBC)
+                    profile += "5_0";
+                else
+                    profile += g_Options.shaderModel;
+                cmd << " -T " << profile;
+
+                // Entry point
+                cmd << " -E " << taskData.entryPoint;
+
+                // Defines
+                for (const string& define : taskData.defines)
+                    cmd << " -D " << define;
+
+                for (const string& define : g_Options.defines)
+                    cmd << " -D " << define;
+
+                // Include directories
+                for (const fs::path& dir : g_Options.includeDirs)
+                    cmd << " -I " << EscapePath(dir.string());
+
+                // Args
+                cmd << optimizationLevelRemap[taskData.optimizationLevel];
+
+                uint32_t shaderModelIndex = (g_Options.shaderModel[0] - '0') * 10 + (g_Options.shaderModel[2] - '0');
+                if (g_Options.platform != DXBC && shaderModelIndex >= 62)
+                    cmd << " -enable-16bit-types";
+
+                if (g_Options.warningsAreErrors)
+                    cmd << " -WX";
+
+                if (g_Options.allResourcesBound)
+                    cmd << " -all_resources_bound";
+
+                if (g_Options.matrixRowMajor)
+                    cmd << " -Zpr";
+
+                if (g_Options.hlsl2021)
+                    cmd << " -HV 2021";
+
+                if (g_Options.pdb)
+                    cmd << " -Zi -Zsb"; // only binary affects hash
+
+                if (g_Options.platform == SPIRV)
+                {
+                    cmd << " -spirv";
+
+                    cmd << " -fspv-target-env=vulkan" << g_Options.vulkanVersion;
+
+                    if (g_Options.vulkanMemoryLayout)
+                        cmd << " -fvk-use-" << g_Options.vulkanMemoryLayout << "-layout";
+
+                    for (const string& ext : g_Options.spirvExtensions)
+                        cmd << " -fspv-extension=" << ext;
+
+                    if (!g_Options.noRegShifts)
+                    {
+                        for (uint32_t space = 0; space < SPIRV_SPACES_NUM; space++)
+                        {
+                            cmd << " -fvk-s-shift " << g_Options.sRegShift << " " << space;
+                            cmd << " -fvk-t-shift " << g_Options.tRegShift << " " << space;
+                            cmd << " -fvk-b-shift " << g_Options.bRegShift << " " << space;
+                            cmd << " -fvk-u-shift " << g_Options.uRegShift << " " << space;
+                        }
+                    }
+                }
+                else // Not supported by SPIRV gen
+                {
+                    if (g_Options.stripReflection)
+                        cmd << " -Qstrip_reflect";
+
+                    if (g_Options.pdb)
+                    {
+                        fs::path pdbPath = fs::path(outputFile).parent_path() / PDB_DIR;
+                        cmd << " -Fd " << EscapePath(pdbPath.string() + "/"); // only binary code affects hash
+                    }
+                }
+            }
 
             // Source file
             fs::path sourceFile = g_Options.configFile.parent_path() / g_Options.sourceDir / taskData.source;
-            cmd << EscapePath(sourceFile.string());
-
-            // Output file
-            string outputFile = taskData.outputFileWithoutExt + g_OutputExt;
-            if (g_Options.binary || g_Options.binaryBlob || g_Options.headerBlob && !taskData.combinedDefines.empty())
-                cmd << " -Fo " << EscapePath(outputFile);
-            if (g_Options.header || g_Options.headerBlob && taskData.combinedDefines.empty())
-            {
-                string name = GetShaderName(taskData.outputFileWithoutExt);
-
-                cmd << " -Fh " << EscapePath(outputFile) << ".h";
-                cmd << " -Vn " << name;
-            }
-
-            // Profile
-            string profile = taskData.profile + "_";
-            if (g_Options.platform == DXBC)
-                profile += "5_0";
-            else
-                profile += g_Options.shaderModel;
-            cmd << " -T " << profile;
-
-            // Entry point
-            cmd << " -E " << taskData.entryPoint;
-
-            // Defines
-            for (const string& define : taskData.defines)
-                cmd << " -D " << define;
-
-            for (const string& define : g_Options.defines)
-                cmd << " -D " << define;
-
-            // Include directories
-            for (const fs::path& dir : g_Options.includeDirs)
-                cmd << " -I " << EscapePath(dir.string());
-
-            // Args
-            cmd << optimizationLevelRemap[taskData.optimizationLevel];
-
-            uint32_t shaderModelIndex = (g_Options.shaderModel[0] - '0') * 10 + (g_Options.shaderModel[2] - '0');
-            if (g_Options.platform != DXBC && shaderModelIndex >= 62)
-                cmd << " -enable-16bit-types";
-
-            if (g_Options.warningsAreErrors)
-                cmd << " -WX";
-
-            if (g_Options.allResourcesBound)
-                cmd << " -all_resources_bound";
-
-            if (g_Options.matrixRowMajor)
-                cmd << " -Zpr";
-
-            if (g_Options.hlsl2021)
-                cmd << " -HV 2021";
-
-            if (g_Options.pdb)
-                cmd << " -Zi -Zsb"; // only binary affects hash
-
-            if (g_Options.platform == SPIRV)
-            {
-                cmd << " -spirv";
-
-                cmd << " -fspv-target-env=vulkan" << g_Options.vulkanVersion;
-
-                if (g_Options.vulkanMemoryLayout)
-                    cmd << " -fvk-use-" << g_Options.vulkanMemoryLayout << "-layout";
-
-                for (const string& ext : g_Options.spirvExtensions)
-                    cmd << " -fspv-extension=" << ext;
-
-                for (uint32_t space = 0; space < SPIRV_SPACES_NUM; space++)
-                {
-                    cmd << " -fvk-s-shift " << g_Options.sRegShift << " " << space;
-                    cmd << " -fvk-t-shift " << g_Options.tRegShift << " " << space;
-                    cmd << " -fvk-b-shift " << g_Options.bRegShift << " " << space;
-                    cmd << " -fvk-u-shift " << g_Options.uRegShift << " " << space;
-                }
-            }
-            else // Not supported by SPIRV gen
-            {
-                if (g_Options.stripReflection)
-                    cmd << " -Qstrip_reflect";
-
-                if (g_Options.pdb)
-                {
-                    fs::path pdbPath = fs::path(outputFile).parent_path() / PDB_DIR;
-                    cmd << " -Fd " << EscapePath(pdbPath.string() + "/"); // only binary code affects hash
-                }
-            }
+            cmd << " " << EscapePath(sourceFile.string());
         }
 
         cmd << " 2>&1";
@@ -1383,6 +1507,35 @@ void ExeCompile()
             }
 
             isSucceeded = pclose(pipe) == 0;
+        }
+        
+        // Slang cannot produce .h files directly, so we convert its binary output to .h here if needed
+        if (isSucceeded && convertBinaryOutputToHeader)
+        {
+            vector<uint8_t> buffer;
+            if (ReadBinaryFile(outputFile.c_str(), buffer))
+            {
+                string headerFile = taskData.outputFileWithoutExt + g_OutputExt + ".h";
+                DataOutputContext context(headerFile.c_str(), true);
+                if (context.stream)
+                {
+                    string shaderName = GetShaderName(taskData.outputFileWithoutExt);
+                    context.WriteTextPreamble(shaderName.c_str());
+                    context.WriteDataAsText(buffer.data(), buffer.size());
+                    context.WriteTextEpilog();
+
+                    // Delete the binary file if it's not requested
+                    if (!g_Options.binary)
+                        fs::remove(outputFile);
+                }
+                else
+                {
+                    Printf(RED "ERROR: Failed to open file '%s' for writing!\n", headerFile.c_str());
+                    isSucceeded = false;
+                }
+            }
+            else
+                isSucceeded = false;
         }
 
         // Update progress
@@ -1719,55 +1872,19 @@ bool CreateBlob(const string& blobName, const vector<BlobEntry>& entries, bool u
     {
         // Open compiled permutation file
         string file = entry.permutationFileWithoutExt + g_OutputExt;
-        FILE* sourceStream = fopen(file.c_str(), "rb");
-        if (!sourceStream)
+
+        vector<uint8_t> fileData;
+        if (ReadBinaryFile(file.c_str(), fileData))
         {
-            Printf(RED "ERROR: Can't open file source '%s'!\n", file.c_str());
-
-            return false;
-        }
-
-        uint32_t sourceSize = GetFileLength(sourceStream);
-
-        // Warn if the file is suspiciously large
-        if (sourceSize > (64 << 20)) // > 64Mb
-            Printf(YELLOW "WARNING: Binary file '%s' is too large!\n", file.c_str());
-
-        // Allocate memory foe the whole file
-        void* buffer = malloc(sourceSize);
-        if (buffer)
-        {
-            // Read the source file
-            size_t bytesRead = fread(buffer, 1, sourceSize, sourceStream);
-            if (bytesRead == sourceSize)
+            if (!ShaderMake::WritePermutation(writeFileCallback, &outputContext, entry.combinedDefines, fileData.data(), fileData.size()))
             {
-                if (!ShaderMake::WritePermutation(writeFileCallback, &outputContext, entry.combinedDefines, buffer, sourceSize))
-                {
-                    Printf(RED "ERROR: Failed to write a shader permutation into '%s'!\n", outputFile.c_str());
-                    success = false;
-                }
-            }
-            else
-            {
-                Printf(RED "ERROR: Failed to read %llu bytes from '%s'!\n", sourceSize, file.c_str());
+                Printf(RED "ERROR: Failed to write a shader permutation into '%s'!\n", outputFile.c_str());
                 success = false;
             }
-
-            free(buffer);
-        }
-        else if (sourceSize)
-        {
-            Printf(RED "ERROR: Can't allocate %u bytes!\n", sourceSize);
-            success = false;
         }
         else
-        {
-            Printf(RED "ERROR: Binary file '%s' is empty!\n", file.c_str());
             success = false;
-        }
-
-        fclose(sourceStream);
-
+        
         if (!success)
             break;
     }
