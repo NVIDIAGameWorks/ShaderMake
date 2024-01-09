@@ -110,6 +110,7 @@ struct Options
     bool warningsAreErrors = false;
     bool allResourcesBound = false;
     bool pdb = false;
+    bool embedPdb = false;
     bool stripReflection = false;
     bool matrixRowMajor = false;
     bool hlsl2021 = false;
@@ -580,6 +581,7 @@ bool Options::Parse(int32_t argc, const char** argv)
             OPT_BOOLEAN(0, "WX", &warningsAreErrors, "Maps to '-WX' DXC/FXC option: warnings are errors", nullptr, 0, 0),
             OPT_BOOLEAN(0, "allResourcesBound", &allResourcesBound, "Maps to '-all_resources_bound' DXC/FXC option: all resources bound", nullptr, 0, 0),
             OPT_BOOLEAN(0, "PDB", &pdb, "Output PDB files in 'out/PDB/' folder", nullptr, 0, 0),
+            OPT_BOOLEAN(0, "embedPDB", &embedPdb, "Embed PDB with the shader binary", nullptr, 0, 0),
             OPT_BOOLEAN(0, "stripReflection", &stripReflection, "Maps to '-Qstrip_reflect' DXC/FXC option: strip reflection information from a shader binary", nullptr, 0, 0),
             OPT_BOOLEAN(0, "matrixRowMajor", &matrixRowMajor, "Maps to '-Zpr' DXC/FXC option: pack matrices in row-major order", nullptr, 0, 0),
             OPT_BOOLEAN(0, "hlsl2021", &hlsl2021, "Maps to '-HV 2021' DXC option: enable HLSL 2021 standard", nullptr, 0, 0),
@@ -1150,12 +1152,15 @@ void DxcCompile()
                 args.push_back(L"2021");
             }
 
-            if (g_Options.pdb)
+            if (g_Options.pdb||g_Options.embedPdb)
             {
                 // TODO: for SPIRV PDB can only be embedded, GetOutput(DXC_OUT_PDB) silently fails...
                 args.push_back(L"-Zi");
                 args.push_back(L"-Zsb"); // only binary code affects hash
             }
+            
+            if (g_Options.embedPdb)
+                args.push_back(L"-Qembed_debug");
 
             if (g_Options.platform == SPIRV)
             {
@@ -1439,8 +1444,11 @@ void ExeCompile()
                 if (g_Options.hlsl2021)
                     cmd << " -HV 2021";
 
-                if (g_Options.pdb)
+                if (g_Options.pdb || g_Options.embedPdb)
                     cmd << " -Zi -Zsb"; // only binary affects hash
+
+            	if (g_Options.embedPdb)
+                	cmd << " -Qembed_debug";
 
                 if (g_Options.platform == SPIRV)
                 {
