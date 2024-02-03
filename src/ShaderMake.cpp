@@ -443,7 +443,7 @@ void DumpShader(const TaskData& taskData, const uint8_t* data, size_t dataSize)
 {
     string file = taskData.outputFileWithoutExt + g_OutputExt;
 
-    if (g_Options.binary || g_Options.binaryBlob || g_Options.headerBlob && !taskData.combinedDefines.empty())
+    if (g_Options.binary || g_Options.binaryBlob || (g_Options.headerBlob && !taskData.combinedDefines.empty()))
     {
         DataOutputContext context(file.c_str(), false);
         if (!context.stream)
@@ -452,7 +452,7 @@ void DumpShader(const TaskData& taskData, const uint8_t* data, size_t dataSize)
         context.WriteDataAsBinary(data, dataSize);
     }
 
-    if (g_Options.header || g_Options.headerBlob && taskData.combinedDefines.empty())
+    if (g_Options.header || (g_Options.headerBlob && taskData.combinedDefines.empty()))
     {
         DataOutputContext context((file + ".h").c_str(), true);
         if (!context.stream)
@@ -1327,7 +1327,7 @@ void ExeCompile()
 
             if (g_Options.slang)
             {
-                if (g_Options.header || g_Options.headerBlob && taskData.combinedDefines.empty())
+                if (g_Options.header || (g_Options.headerBlob && taskData.combinedDefines.empty()))
                     convertBinaryOutputToHeader = true;
                 
                 // Profile
@@ -1393,9 +1393,9 @@ void ExeCompile()
                 cmd << " -nologo";
 
                 // Output file
-                if (g_Options.binary || g_Options.binaryBlob || g_Options.headerBlob && !taskData.combinedDefines.empty())
+                if (g_Options.binary || g_Options.binaryBlob || (g_Options.headerBlob && !taskData.combinedDefines.empty()))
                     cmd << " -Fo " << EscapePath(outputFile);
-                if (g_Options.header || g_Options.headerBlob && taskData.combinedDefines.empty())
+                if (g_Options.header || (g_Options.headerBlob && taskData.combinedDefines.empty()))
                 {
                     string name = GetShaderName(taskData.outputFileWithoutExt);
 
