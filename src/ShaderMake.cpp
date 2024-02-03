@@ -161,6 +161,7 @@ map<string, vector<BlobEntry>> g_ShaderBlobs;
 vector<TaskData> g_TaskData;
 mutex g_TaskMutex;
 atomic<uint32_t> g_ProcessedTaskCount;
+atomic<int> g_TaskRetryCount;
 atomic<bool> g_Terminate = false;
 atomic<uint32_t> g_FailedTaskCount = 0;
 uint32_t g_OriginalTaskCount;
@@ -465,7 +466,7 @@ void DumpShader(const TaskData& taskData, const uint8_t* data, size_t dataSize)
     }
 }
 
-void UpdateProgress(const TaskData& taskData, bool isSucceeded, const char* message)
+void UpdateProgress(const TaskData& taskData, bool isSucceeded, bool willRetry, const char* message)
 {
     // IMPORTANT: do not split into several "Printf" calls because multi-threading access to the console can mess up the order
     if (isSucceeded)
@@ -492,17 +493,34 @@ void UpdateProgress(const TaskData& taskData, bool isSucceeded, const char* mess
     }
     else
     {
-        Printf(RED "[ FAIL ] %s %s {%s} {%s}\n%s",
-            g_Options.platformName,
-            taskData.source.c_str(),
-            taskData.entryPoint.c_str(),
-            taskData.combinedDefines.c_str(),
-            message ? message : "<no message text>!\n");
+		// if retrying, requeue the task and try again without counting failure or terminating
+		if (willRetry)
+		{
+			Printf(YELLOW "[ RETRY-QUEUED ] %s %s {%s} {%s}\n",
+				g_Options.platformName,
+				taskData.source.c_str(),
+				taskData.entryPoint.c_str(),
+				taskData.combinedDefines.c_str());
 
-        if (!g_Options.continueOnError)
-            g_Terminate = true;
+			lock_guard<mutex> guard(g_TaskMutex);
+			g_TaskData.push_back(taskData);
 
-        ++g_FailedTaskCount;
+			--g_TaskRetryCount;
+		}
+		else
+		{
+			Printf(RED "[ FAIL ] %s %s {%s} {%s}\n%s",
+				   g_Options.platformName,
+				   taskData.source.c_str(),
+				   taskData.entryPoint.c_str(),
+				   taskData.combinedDefines.c_str(),
+				   message ? message : "<no message text>!\n");
+			
+			if (!g_Options.continueOnError)
+				g_Terminate = true;
+			
+			++g_FailedTaskCount;
+		}
     }
 }
 
@@ -988,7 +1006,7 @@ void FxcCompile()
             DumpShader(taskData, (uint8_t*)codeBlob->GetBufferPointer(), codeBlob->GetBufferSize());
 
         // Update progress
-        UpdateProgress(taskData, isSucceeded, errorBlob ? (char*)errorBlob->GetBufferPointer() : nullptr);
+        UpdateProgress(taskData, isSucceeded, false, errorBlob ? (char*)errorBlob->GetBufferPointer() : nullptr);
 
         // Terminate if this shader failed and "--continue" is not set
         if (g_Terminate)
@@ -1249,7 +1267,7 @@ void DxcCompile()
             DumpShader(taskData, (uint8_t*)codeBlob->GetBufferPointer(), codeBlob->GetBufferSize());
 
         // Update progress
-        UpdateProgress(taskData, isSucceeded, errorBlob ? (char*)errorBlob->GetBufferPointer() : nullptr);
+        UpdateProgress(taskData, isSucceeded, false, errorBlob ? (char*)errorBlob->GetBufferPointer() : nullptr);
     }
 }
 
@@ -1501,7 +1519,7 @@ void ExeCompile()
         ostringstream msg;
         FILE* pipe = popen(cmd.str().c_str(), "r");
 
-        bool isSucceeded = false;
+        bool isSucceeded = false, willRetry = false;
         if (pipe)
         {
             char buf[1024];
@@ -1514,7 +1532,18 @@ void ExeCompile()
                 msg << buf;
             }
 
-            isSucceeded = pclose(pipe) == 0;
+			int result = pclose(pipe);
+			int error = errno;
+
+			if (result == 0)
+				isSucceeded = true;
+			else if (g_TaskRetryCount > 0 && ((result == -1 && error == ECHILD)
+	#ifndef WIN32
+					 || (WIFEXITED(result) && WEXITSTATUS(result) == 127)
+	#endif
+					 ))
+				// retry if count > 0 and failed to execute child process or command shell (posix only)
+				willRetry = true;
         }
         
         // Slang cannot produce .h files directly, so we convert its binary output to .h here if needed
@@ -1547,7 +1576,7 @@ void ExeCompile()
         }
 
         // Update progress
-        UpdateProgress(taskData, isSucceeded, msg.str().c_str());
+        UpdateProgress(taskData, isSucceeded, willRetry, msg.str().c_str());
     }
 }
 
@@ -2051,6 +2080,9 @@ int32_t main(int32_t argc, const char** argv)
         g_OriginalTaskCount = (uint32_t)g_TaskData.size();
         g_ProcessedTaskCount = 0;
         g_FailedTaskCount = 0;
+
+		// Retry limit for pclose() failures, retry a minimum of 10 times up to 5% maximum
+		g_TaskRetryCount = max(10, int(g_OriginalTaskCount/20));
 
         uint32_t threadsNum = max(g_Options.serial ? 1 : thread::hardware_concurrency(), 1u);
 
