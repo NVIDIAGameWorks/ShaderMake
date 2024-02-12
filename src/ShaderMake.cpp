@@ -119,6 +119,7 @@ struct Options
     bool useAPI = false;
     bool slang = false;
     bool noRegShifts = false;
+    int retryCount = 10; // default 10 retries for compilation task sub-process failures
 
     bool Parse(int32_t argc, const char** argv);
 
@@ -161,6 +162,7 @@ map<string, vector<BlobEntry>> g_ShaderBlobs;
 vector<TaskData> g_TaskData;
 mutex g_TaskMutex;
 atomic<uint32_t> g_ProcessedTaskCount;
+atomic<int> g_TaskRetryCount;
 atomic<bool> g_Terminate = false;
 atomic<uint32_t> g_FailedTaskCount = 0;
 uint32_t g_OriginalTaskCount;
@@ -443,7 +445,7 @@ void DumpShader(const TaskData& taskData, const uint8_t* data, size_t dataSize)
 {
     string file = taskData.outputFileWithoutExt + g_OutputExt;
 
-    if (g_Options.binary || g_Options.binaryBlob || g_Options.headerBlob && !taskData.combinedDefines.empty())
+    if (g_Options.binary || g_Options.binaryBlob || (g_Options.headerBlob && !taskData.combinedDefines.empty()))
     {
         DataOutputContext context(file.c_str(), false);
         if (!context.stream)
@@ -452,7 +454,7 @@ void DumpShader(const TaskData& taskData, const uint8_t* data, size_t dataSize)
         context.WriteDataAsBinary(data, dataSize);
     }
 
-    if (g_Options.header || g_Options.headerBlob && taskData.combinedDefines.empty())
+    if (g_Options.header || (g_Options.headerBlob && taskData.combinedDefines.empty()))
     {
         DataOutputContext context((file + ".h").c_str(), true);
         if (!context.stream)
@@ -465,7 +467,7 @@ void DumpShader(const TaskData& taskData, const uint8_t* data, size_t dataSize)
     }
 }
 
-void UpdateProgress(const TaskData& taskData, bool isSucceeded, const char* message)
+void UpdateProgress(const TaskData& taskData, bool isSucceeded, bool willRetry, const char* message)
 {
     // IMPORTANT: do not split into several "Printf" calls because multi-threading access to the console can mess up the order
     if (isSucceeded)
@@ -492,17 +494,34 @@ void UpdateProgress(const TaskData& taskData, bool isSucceeded, const char* mess
     }
     else
     {
-        Printf(RED "[ FAIL ] %s %s {%s} {%s}\n%s",
-            g_Options.platformName,
-            taskData.source.c_str(),
-            taskData.entryPoint.c_str(),
-            taskData.combinedDefines.c_str(),
-            message ? message : "<no message text>!\n");
+        // If retrying, requeue the task and try again without counting failure or terminating
+        if (willRetry)
+        {
+            Printf(YELLOW "[ RETRY-QUEUED ] %s %s {%s} {%s}\n",
+                g_Options.platformName,
+                taskData.source.c_str(),
+                taskData.entryPoint.c_str(),
+                taskData.combinedDefines.c_str());
 
-        if (!g_Options.continueOnError)
-            g_Terminate = true;
+            lock_guard<mutex> guard(g_TaskMutex);
+            g_TaskData.push_back(taskData);
 
-        ++g_FailedTaskCount;
+            --g_TaskRetryCount;
+        }
+        else
+        {
+            Printf(RED "[ FAIL ] %s %s {%s} {%s}\n%s",
+                   g_Options.platformName,
+                   taskData.source.c_str(),
+                   taskData.entryPoint.c_str(),
+                   taskData.combinedDefines.c_str(),
+                   message ? message : "<no message text>!\n");
+            
+            if (!g_Options.continueOnError)
+                g_Terminate = true;
+            
+            ++g_FailedTaskCount;
+        }
     }
 }
 
@@ -600,6 +619,7 @@ bool Options::Parse(int32_t argc, const char** argv)
             OPT_BOOLEAN(0, "useAPI", &useAPI, "Use FXC (d3dcompiler) or DXC (dxcompiler) API explicitly (Windows only)", nullptr, 0, 0),
             OPT_BOOLEAN(0, "colorize", &colorize, "Colorize console output", nullptr, 0, 0),
             OPT_BOOLEAN(0, "verbose", &verbose, "Print commands before they are executed", nullptr, 0, 0),
+            OPT_INTEGER(0, "retryCount", &retryCount, "Retry count for compilation task sub-process failures", nullptr, 0, 0),
         OPT_GROUP("SPIRV options:"),
             OPT_STRING(0, "vulkanVersion", &vulkanVersion, "Vulkan environment version, maps to '-fspv-target-env' (default = 1.3)", nullptr, 0, 0),
             OPT_STRING(0, "spirvExt", &unused, "Maps to '-fspv-extension' option: add SPIR-V extension permitted to use", AddSpirvExtension, (intptr_t)this, 0),
@@ -713,6 +733,12 @@ bool Options::Parse(int32_t argc, const char** argv)
     {
         Printf(RED "ERROR: Unsupported value '%s' for --vulkanMemoryLayout! Only 'dx', 'gl' and 'scalar' are supported.\n",
             g_Options.vulkanMemoryLayout);
+        return false;
+    }
+
+    if (g_Options.retryCount < 0)
+    {
+        Printf(RED "ERROR: --retryCount must be greater than or equal to 0.\n");
         return false;
     }
 
@@ -988,7 +1014,7 @@ void FxcCompile()
             DumpShader(taskData, (uint8_t*)codeBlob->GetBufferPointer(), codeBlob->GetBufferSize());
 
         // Update progress
-        UpdateProgress(taskData, isSucceeded, errorBlob ? (char*)errorBlob->GetBufferPointer() : nullptr);
+        UpdateProgress(taskData, isSucceeded, false, errorBlob ? (char*)errorBlob->GetBufferPointer() : nullptr);
 
         // Terminate if this shader failed and "--continue" is not set
         if (g_Terminate)
@@ -1249,7 +1275,7 @@ void DxcCompile()
             DumpShader(taskData, (uint8_t*)codeBlob->GetBufferPointer(), codeBlob->GetBufferSize());
 
         // Update progress
-        UpdateProgress(taskData, isSucceeded, errorBlob ? (char*)errorBlob->GetBufferPointer() : nullptr);
+        UpdateProgress(taskData, isSucceeded, false, errorBlob ? (char*)errorBlob->GetBufferPointer() : nullptr);
     }
 }
 
@@ -1327,7 +1353,7 @@ void ExeCompile()
 
             if (g_Options.slang)
             {
-                if (g_Options.header || g_Options.headerBlob && taskData.combinedDefines.empty())
+                if (g_Options.header || (g_Options.headerBlob && taskData.combinedDefines.empty()))
                     convertBinaryOutputToHeader = true;
                 
                 // Profile
@@ -1393,9 +1419,9 @@ void ExeCompile()
                 cmd << " -nologo";
 
                 // Output file
-                if (g_Options.binary || g_Options.binaryBlob || g_Options.headerBlob && !taskData.combinedDefines.empty())
+                if (g_Options.binary || g_Options.binaryBlob || (g_Options.headerBlob && !taskData.combinedDefines.empty()))
                     cmd << " -Fo " << EscapePath(outputFile);
-                if (g_Options.header || g_Options.headerBlob && taskData.combinedDefines.empty())
+                if (g_Options.header || (g_Options.headerBlob && taskData.combinedDefines.empty()))
                 {
                     string name = GetShaderName(taskData.outputFileWithoutExt);
 
@@ -1447,8 +1473,8 @@ void ExeCompile()
                 if (g_Options.pdb || g_Options.embedPdb)
                     cmd << " -Zi -Zsb"; // only binary affects hash
 
-            	if (g_Options.embedPdb)
-                	cmd << " -Qembed_debug";
+                if (g_Options.embedPdb)
+                    cmd << " -Qembed_debug";
 
                 if (g_Options.platform == SPIRV)
                 {
@@ -1501,7 +1527,7 @@ void ExeCompile()
         ostringstream msg;
         FILE* pipe = popen(cmd.str().c_str(), "r");
 
-        bool isSucceeded = false;
+        bool isSucceeded = false, willRetry = false;
         if (pipe)
         {
             char buf[1024];
@@ -1514,7 +1540,21 @@ void ExeCompile()
                 msg << buf;
             }
 
-            isSucceeded = pclose(pipe) == 0;
+            const int result = pclose(pipe);
+            // Check status, see https://pubs.opengroup.org/onlinepubs/009696699/functions/pclose.html
+            const bool childProcessError = (result == -1 && errno == ECHILD);
+#ifdef WIN32
+            const bool commandShellError = false;
+#else
+            const bool commandShellError = (WIFEXITED(result) && WEXITSTATUS(result) == 127);
+#endif
+
+            if (result == 0)
+                isSucceeded = true;
+
+            // Retry if count > 0 and failed to execute child sub-process or command shell (posix only)
+            else if (g_TaskRetryCount > 0 && (childProcessError || commandShellError))
+                willRetry = true;
         }
         
         // Slang cannot produce .h files directly, so we convert its binary output to .h here if needed
@@ -1547,7 +1587,7 @@ void ExeCompile()
         }
 
         // Update progress
-        UpdateProgress(taskData, isSucceeded, msg.str().c_str());
+        UpdateProgress(taskData, isSucceeded, willRetry, msg.str().c_str());
     }
 }
 
@@ -2051,6 +2091,9 @@ int32_t main(int32_t argc, const char** argv)
         g_OriginalTaskCount = (uint32_t)g_TaskData.size();
         g_ProcessedTaskCount = 0;
         g_FailedTaskCount = 0;
+
+        // Retry limit for compilation task sub-process failures that can occur when threading
+        g_TaskRetryCount = g_Options.retryCount;
 
         uint32_t threadsNum = max(g_Options.serial ? 1 : thread::hardware_concurrency(), 1u);
 
