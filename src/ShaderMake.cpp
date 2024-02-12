@@ -119,7 +119,7 @@ struct Options
     bool useAPI = false;
     bool slang = false;
     bool noRegShifts = false;
-    uint32_t retryCount = 10; // default 10 retries for compilation task sub-process failures
+    int retryCount = 10; // default 10 retries for compilation task sub-process failures
 
     bool Parse(int32_t argc, const char** argv);
 
@@ -162,7 +162,7 @@ map<string, vector<BlobEntry>> g_ShaderBlobs;
 vector<TaskData> g_TaskData;
 mutex g_TaskMutex;
 atomic<uint32_t> g_ProcessedTaskCount;
-atomic<uint32_t> g_TaskRetryCount;
+atomic<int> g_TaskRetryCount;
 atomic<bool> g_Terminate = false;
 atomic<uint32_t> g_FailedTaskCount = 0;
 uint32_t g_OriginalTaskCount;
@@ -733,6 +733,12 @@ bool Options::Parse(int32_t argc, const char** argv)
     {
         Printf(RED "ERROR: Unsupported value '%s' for --vulkanMemoryLayout! Only 'dx', 'gl' and 'scalar' are supported.\n",
             g_Options.vulkanMemoryLayout);
+        return false;
+    }
+
+    if (g_Options.retryCount < 0)
+    {
+        Printf(RED "ERROR: --retryCount must be greater than or equal to 0.\n");
         return false;
     }
 
