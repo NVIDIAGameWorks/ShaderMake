@@ -134,6 +134,8 @@ struct ConfigLine
     const char* entryPoint = "main";
     const char* profile = nullptr;
     const char* outputDir = nullptr;
+    const char* outputSuffix = nullptr;
+
     uint32_t optimizationLevel = USE_GLOBAL_OPTIMIZATION_LEVEL;
 
     bool Parse(int32_t argc, const char** argv);
@@ -777,11 +779,12 @@ bool ConfigLine::Parse(int32_t argc, const char** argv)
         OPT_STRING('D', "define", &unused, "(Optional) define(s) in forms 'M=value' or 'M'", AddLocalDefine, (intptr_t)this, 0),
         OPT_STRING('o', "output", &outputDir, "(Optional) output subdirectory", nullptr, 0, 0),
         OPT_INTEGER('O', "optimization", &optimizationLevel, "(Optional) optimization level", nullptr, 0, 0),
+        OPT_STRING(0, "outputSuffix", &outputSuffix, "(Optional) Suffix to add before extension after filename", nullptr, 0, 0),
         OPT_END(),
     };
 
     static const char* usages[] = {
-        "path/to/shader -T profile [-E entry -O{0|1|2|3} -o \"output/subdirectory\" -D DEF1={0,1} -D DEF2={0,1,2} -D DEF3 ...]",
+        "path/to/shader -T profile [-E entry -O{0|1|2|3} -o \"output/subdirectory\" --outputSuffix \"suffix\" -D DEF1={0,1} -D DEF2={0,1,2} -D DEF3 ...]",
         nullptr
     };
 
@@ -1711,6 +1714,8 @@ bool ProcessConfigLine(uint32_t lineIndex, const string& line, const fs::file_ti
         shaderName = shaderName.filename();
     if (strcmp(configLine.entryPoint, "main"))
         shaderName += "_" + string(configLine.entryPoint);
+    if(configLine.outputSuffix)
+        shaderName += string(configLine.outputSuffix);
 
     // Compiled permutation name
     fs::path permutationName = shaderName;
