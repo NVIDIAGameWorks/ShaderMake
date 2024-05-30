@@ -80,7 +80,13 @@ add_executable (ShaderMake
     src/ShaderMake.cpp 
 )
 target_compile_options (ShaderMake PRIVATE ${COMPILE_OPTIONS})
-set_target_properties (ShaderMake PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${SHADERMAKE_BIN_OUTPUT_PATH}/$<CONFIG>")
+set_target_properties (ShaderMake PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY                "${SHADERMAKE_BIN_OUTPUT_PATH}/$<CONFIG>"
+    RUNTIME_OUTPUT_DIRECTORY_DEBUG          "${SHADERMAKE_BIN_OUTPUT_PATH}/Debug"
+    RUNTIME_OUTPUT_DIRECTORY_MINSIZEREL     "${SHADERMAKE_BIN_OUTPUT_PATH}/MinSizeRel"
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE        "${SHADERMAKE_BIN_OUTPUT_PATH}/Release"
+    RUNTIME_OUTPUT_DIRECTORY_RELWITHDEBINFO "${SHADERMAKE_BIN_OUTPUT_PATH}/RelWithDebInfo"
+)
 set_property (DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR} PROPERTY VS_STARTUP_PROJECT ShaderMake)
 set_property (TARGET ShaderMake PROPERTY FOLDER ShaderMake)
 target_link_libraries (ShaderMake ShaderMakeBlob)
