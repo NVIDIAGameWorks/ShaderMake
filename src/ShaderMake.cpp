@@ -169,7 +169,6 @@ atomic<bool> g_Terminate = false;
 atomic<uint32_t> g_FailedTaskCount = 0;
 uint32_t g_OriginalTaskCount;
 const char* g_OutputExt = nullptr;
-bool g_UseSlang = false;
 
 static const char* g_PlatformNames[] = {
     "DXBC",
@@ -693,6 +692,7 @@ bool Options::Parse(int32_t argc, const char** argv)
     if (slang && useAPI)
     {
         Printf(RED "ERROR: Use of Slang with --useAPI is not implemented.\n");
+        return false;
     }
 
     if (strlen(shaderModel) != 3 || strstr(shaderModel, "."))
@@ -733,8 +733,15 @@ bool Options::Parse(int32_t argc, const char** argv)
         strcmp(g_Options.vulkanMemoryLayout, "gl") != 0 && 
         strcmp(g_Options.vulkanMemoryLayout, "scalar") != 0)
     {
-        Printf(RED "ERROR: Unsupported value '%s' for --vulkanMemoryLayout! Only 'dx', 'gl' and 'scalar' are supported.\n",
-            g_Options.vulkanMemoryLayout);
+        if (g_Options.slang && (strcmp(g_Options.vulkanMemoryLayout, "dx") == 0)) 
+        {
+            Printf(RED "ERROR: Unsupported value '%s' for --vulkanMemoryLayout! Only 'gl' and 'scalar' are supported for Slang.\n",
+                g_Options.vulkanMemoryLayout);
+        }
+        else {
+            Printf(RED "ERROR: Unsupported value '%s' for --vulkanMemoryLayout! Only 'dx', 'gl' and 'scalar' are supported.\n",
+                g_Options.vulkanMemoryLayout);
+        }
         return false;
     }
 
@@ -1359,6 +1366,9 @@ void ExeCompile()
                 if (g_Options.header || (g_Options.headerBlob && taskData.combinedDefines.empty()))
                     convertBinaryOutputToHeader = true;
                 
+                // Language mode: slang
+                cmd << " -lang slang";
+
                 // Profile
                 cmd << " -profile " << taskData.profile << "_" << g_Options.shaderModel;
                 

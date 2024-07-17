@@ -36,7 +36,7 @@ Required options:
 - `-h, --header` - Output header files
 - `-B, --binaryBlob` - Output binary blob files
 - `-H, --headerBlob` - Output header blob files
-- `--compiler=<str>` - Path to a FXC/DXC compiler
+- `--compiler=<str>` - Path to a FXC/DXC/Slang compiler
 
 Compiler settings:
 - `-m, --shaderModel=<str>` - Shader model for DXIL/SPIRV (always SM 5.0 for DXBC)
@@ -47,6 +47,7 @@ Compiler settings:
 - `--stripReflection` - Maps to `-Qstrip_reflect` DXC/FXC option: strip reflection information from a shader binary
 - `--matrixRowMajor` - Maps to `-Zpr` DXC/FXC option: pack matrices in row-major order
 - `--hlsl2021` - Maps to `-HV 2021` DXC option: enable HLSL 2021 standard
+- `--slang` - Use Slang for compilation, requires `--compiler` to specify a path to `slangc` executable
 
 Defines & include directories:
 - `-I, --include=<str>` - Include directory(s)
