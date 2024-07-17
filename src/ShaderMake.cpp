@@ -1407,6 +1407,9 @@ void ExeCompile()
 
                 if (g_Options.platform == SPIRV)
                 {
+                    // Uses the entrypoint name from the source instead of 'main' in the spirv output
+                    cmd << " -fvk-use-entrypoint-name";
+
                     if (g_Options.vulkanMemoryLayout)
                     {   
                         if (strcmp(g_Options.vulkanMemoryLayout, "scalar") == 0)
