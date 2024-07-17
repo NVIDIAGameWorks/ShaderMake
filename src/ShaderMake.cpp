@@ -1369,6 +1369,9 @@ void ExeCompile()
                 // Language mode: slang
                 cmd << " -lang slang";
 
+                // Treat enums as unscoped
+                cmd << " -unscoped-enum";
+
                 // Profile
                 cmd << " -profile " << taskData.profile << "_" << g_Options.shaderModel;
                 
