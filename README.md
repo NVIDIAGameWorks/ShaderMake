@@ -48,6 +48,7 @@ Compiler settings:
 - `--matrixRowMajor` - Maps to `-Zpr` DXC/FXC option: pack matrices in row-major order
 - `--hlsl2021` - Maps to `-HV 2021` DXC option: enable HLSL 2021 standard
 - `--slang` - Use Slang for compilation, requires `--compiler` to specify a path to `slangc` executable
+- `--slangHLSL` - Use HLSL compatibility mode when compiler is Slang
 
 Defines & include directories:
 - `-I, --include=<str>` - Include directory(s)
