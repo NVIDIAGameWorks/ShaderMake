@@ -118,6 +118,7 @@ struct Options
     bool colorize = false;
     bool useAPI = false;
     bool slang = false;
+    bool slangHlsl = false;
     bool noRegShifts = false;
     int retryCount = 10; // default 10 retries for compilation task sub-process failures
 
@@ -169,7 +170,6 @@ atomic<bool> g_Terminate = false;
 atomic<uint32_t> g_FailedTaskCount = 0;
 uint32_t g_OriginalTaskCount;
 const char* g_OutputExt = nullptr;
-bool g_UseSlang = false;
 
 static const char* g_PlatformNames[] = {
     "DXBC",
@@ -607,6 +607,7 @@ bool Options::Parse(int32_t argc, const char** argv)
             OPT_BOOLEAN(0, "matrixRowMajor", &matrixRowMajor, "Maps to '-Zpr' DXC/FXC option: pack matrices in row-major order", nullptr, 0, 0),
             OPT_BOOLEAN(0, "hlsl2021", &hlsl2021, "Maps to '-HV 2021' DXC option: enable HLSL 2021 standard", nullptr, 0, 0),
             OPT_STRING(0, "vulkanMemoryLayout", &vulkanMemoryLayout, "Maps to '-fvk-use-<VALUE>-layout' DXC options: dx, gl, scalar", nullptr, 0, 0),
+            OPT_BOOLEAN(0, "slangHLSL", &slangHlsl, "Use HLSL compatibility mode when compiler is Slang", nullptr, 0, 0),
         OPT_GROUP("Defines & include directories:"),
             OPT_STRING('I', "include", &unused, "Include directory(s)", AddInclude, (intptr_t)this, 0),
             OPT_STRING('D', "define", &unused, "Macro definition(s) in forms 'M=value' or 'M'", AddGlobalDefine, (intptr_t)this, 0),
@@ -693,6 +694,7 @@ bool Options::Parse(int32_t argc, const char** argv)
     if (slang && useAPI)
     {
         Printf(RED "ERROR: Use of Slang with --useAPI is not implemented.\n");
+        return false;
     }
 
     if (strlen(shaderModel) != 3 || strstr(shaderModel, "."))
@@ -733,8 +735,15 @@ bool Options::Parse(int32_t argc, const char** argv)
         strcmp(g_Options.vulkanMemoryLayout, "gl") != 0 && 
         strcmp(g_Options.vulkanMemoryLayout, "scalar") != 0)
     {
-        Printf(RED "ERROR: Unsupported value '%s' for --vulkanMemoryLayout! Only 'dx', 'gl' and 'scalar' are supported.\n",
-            g_Options.vulkanMemoryLayout);
+        if (g_Options.slang && (strcmp(g_Options.vulkanMemoryLayout, "dx") == 0)) 
+        {
+            Printf(RED "ERROR: Unsupported value '%s' for --vulkanMemoryLayout! Only 'gl' and 'scalar' are supported for Slang.\n",
+                g_Options.vulkanMemoryLayout);
+        }
+        else {
+            Printf(RED "ERROR: Unsupported value '%s' for --vulkanMemoryLayout! Only 'dx', 'gl' and 'scalar' are supported.\n",
+                g_Options.vulkanMemoryLayout);
+        }
         return false;
     }
 
@@ -1358,7 +1367,19 @@ void ExeCompile()
             {
                 if (g_Options.header || (g_Options.headerBlob && taskData.combinedDefines.empty()))
                     convertBinaryOutputToHeader = true;
-                
+
+                // Slang defaults to slang language mode unless -lang <other language> sets something else.
+                // For HLSL compatibility mode:
+                //    - use -lang hlsl to set language mode to HLSL
+                //    - use -unscoped-enums so Slang doesn't require all enums to be scoped                
+                if (g_Options.slangHlsl) {              
+                    // Language mode: hlsl
+                    cmd << " -lang hlsl";
+
+                    // Treat enums as unscoped
+                    cmd << " -unscoped-enum";
+                }
+
                 // Profile
                 cmd << " -profile " << taskData.profile << "_" << g_Options.shaderModel;
                 
@@ -1369,7 +1390,10 @@ void ExeCompile()
                 cmd << " -o " << EscapePath(outputFile);
 
                 // Entry point
-                cmd << " -entry " << taskData.entryPoint;
+                if (taskData.profile != "lib") {
+                    // Don't specify entry if profile is lib_*, Slang will use the entry point currently
+                    cmd << " -entry " << taskData.entryPoint;
+                }
 
                 // Defines
                 for (const string& define : taskData.defines)
@@ -1397,6 +1421,9 @@ void ExeCompile()
 
                 if (g_Options.platform == SPIRV)
                 {
+                    // Uses the entrypoint name from the source instead of 'main' in the SPIRV output
+                    cmd << " -fvk-use-entrypoint-name";
+
                     if (g_Options.vulkanMemoryLayout)
                     {   
                         if (strcmp(g_Options.vulkanMemoryLayout, "scalar") == 0)
