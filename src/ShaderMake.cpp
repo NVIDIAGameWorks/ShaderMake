@@ -83,6 +83,7 @@ struct Options
     vector<fs::path> relaxedIncludes;
     vector<string> defines;
     vector<string> spirvExtensions = {"SPV_EXT_descriptor_indexing", "KHR"};
+    vector<string> compilerOptions;
     fs::path configFile;
     const char* platformName = nullptr;
     const char* outputDir = nullptr;
@@ -579,6 +580,9 @@ int AddRelaxedInclude(struct argparse* self, const struct argparse_option* optio
 int AddSpirvExtension(struct argparse* self, const struct argparse_option* option)
 { ((Options*)(option->data))->spirvExtensions.push_back(*(const char**)option->value); UNUSED(self); return 0; }
 
+int AddCompilerOptions(struct argparse* self, const struct argparse_option* option)
+{ ((Options*)(option->data))->compilerOptions.push_back(*(const char**)option->value); UNUSED(self); return 0; }
+
 bool Options::Parse(int32_t argc, const char** argv)
 {
     const char* config = nullptr;
@@ -608,6 +612,7 @@ bool Options::Parse(int32_t argc, const char** argv)
             OPT_BOOLEAN(0, "hlsl2021", &hlsl2021, "Maps to '-HV 2021' DXC option: enable HLSL 2021 standard", nullptr, 0, 0),
             OPT_STRING(0, "vulkanMemoryLayout", &vulkanMemoryLayout, "Maps to '-fvk-use-<VALUE>-layout' DXC options: dx, gl, scalar", nullptr, 0, 0),
             OPT_BOOLEAN(0, "slangHLSL", &slangHlsl, "Use HLSL compatibility mode when compiler is Slang", nullptr, 0, 0),
+            OPT_STRING('X', "compilerOptions", &unused, "Custom command line options for the compiler, separated by spaces", AddCompilerOptions, (intptr_t)this, 0),
         OPT_GROUP("Defines & include directories:"),
             OPT_STRING('I', "include", &unused, "Include directory(s)", AddInclude, (intptr_t)this, 0),
             OPT_STRING('D', "define", &unused, "Macro definition(s) in forms 'M=value' or 'M'", AddGlobalDefine, (intptr_t)this, 0),
@@ -615,7 +620,7 @@ bool Options::Parse(int32_t argc, const char** argv)
             OPT_BOOLEAN('f', "force", &force, "Treat all source files as modified", nullptr, 0, 0),
             OPT_STRING(0, "sourceDir", &sourceDir, "Source code directory", nullptr, 0, 0),
             OPT_STRING(0, "relaxedInclude", &unused, "Include file(s) not invoking re-compilation", AddRelaxedInclude, (intptr_t)this, 0),
-            OPT_STRING(0, "outputExt", &outputExt, "Extension for output files, default is one of .dxbc, .dxil, .spirv", AddRelaxedInclude, (intptr_t)this, 0),
+            OPT_STRING(0, "outputExt", &outputExt, "Extension for output files, default is one of .dxbc, .dxil, .spirv", nullptr, 0, 0),
             OPT_BOOLEAN(0, "serial", &serial, "Disable multi-threading", nullptr, 0, 0),
             OPT_BOOLEAN(0, "flatten", &flatten, "Flatten source directory structure in the output directory", nullptr, 0, 0),
             OPT_BOOLEAN(0, "continue", &continueOnError, "Continue compilation if an error is occured", nullptr, 0, 0),
@@ -747,6 +752,12 @@ bool Options::Parse(int32_t argc, const char** argv)
         return false;
     }
 
+    if (!g_Options.compilerOptions.empty() && g_Options.useAPI && g_Options.platform == Platform::DXBC)
+    {
+        Printf(RED "ERROR: --compilerOptions is not compatible with '--platform DXBC --useAPI'!\n");
+        return false;
+    }
+
     if (g_Options.retryCount < 0)
     {
         Printf(RED "ERROR: --retryCount must be greater than or equal to 0.\n");
@@ -836,6 +847,48 @@ void TokenizeDefineStrings(vector<string>& in, vector<D3D_SHADER_MACRO>& out)
         define.Name = strtok(s, "=");
         define.Definition = strtok(nullptr, "=");
     }
+}
+
+// Parses a string with command line options into a vector of wstring, one wstring per option.
+// Options are separated by spaces and may be quoted with "double quotes".
+// Backslash (\) means the next character is inserted literally into the output.
+void TokenizeCompilerOptions(const char* in, vector<wstring>& out)
+{
+    wstring current;
+    bool quotes = false;
+    bool escape = false;
+    const char* ptr = in;
+    while (char ch = *ptr++)
+    {
+        if (escape)
+        {
+            current.push_back(wchar_t(ch));
+            escape = false;
+            continue;
+        }
+
+        if (ch == ' ' && !quotes)
+        {
+            if (!current.empty())
+                out.push_back(current);
+            current.clear();
+        }
+        else if (ch == '\\')
+        {
+            escape = true;
+        }
+        else if (ch == '"')
+        {
+            quotes = !quotes;
+        }
+        else
+        {
+            current.push_back(wchar_t(ch));
+        }
+    }
+
+    if (!current.empty())
+        out.push_back(current);
 }
 
 class FxcIncluder : public ID3DInclude
@@ -1220,6 +1273,11 @@ void DxcCompile()
                     args.push_back(L"-Qstrip_reflect");
             }
 
+            for (string const& options : g_Options.compilerOptions)
+            {
+                TokenizeCompilerOptions(options.c_str(), args);
+            }
+
             // Debug output
             if (g_Options.verbose)
             {
@@ -1443,6 +1501,10 @@ void ExeCompile()
                         }
                     }
                 }
+
+                // Custom options
+                for (string const& options : g_Options.compilerOptions)
+                    cmd << " " << options;
             }
             else
             {
@@ -1540,6 +1602,10 @@ void ExeCompile()
                         cmd << " -Fd " << EscapePath(pdbPath.string() + "/"); // only binary code affects hash
                     }
                 }
+
+                // Custom options
+                for (string const& options : g_Options.compilerOptions)
+                    cmd << " " << options;
             }
 
             // Source file

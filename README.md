@@ -49,6 +49,7 @@ Compiler settings:
 - `--hlsl2021` - Maps to `-HV 2021` DXC option: enable HLSL 2021 standard
 - `--slang` - Use Slang for compilation, requires `--compiler` to specify a path to `slangc` executable
 - `--slangHLSL` - Use HLSL compatibility mode when compiler is Slang
+- `-X, --compilerOptions=<str>` - Custom command line options for the compiler, separated by spaces
 
 Defines & include directories:
 - `-I, --include=<str>` - Include directory(s)
