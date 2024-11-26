@@ -50,8 +50,6 @@ endif()
 # Compile options
 if (${CMAKE_SYSTEM_PROCESSOR} MATCHES "x86_64")
   set (SIMD -msse4.1)
-elseif (${CMAKE_SYSTEM_PROCESSOR} MATCHES "aarch64")
-  set (SIMD -fPIC)
 endif ()
 
 if (CMAKE_CXX_COMPILER_ID MATCHES "Clang")
@@ -71,7 +69,10 @@ add_library (ShaderMakeBlob STATIC
 )
 target_include_directories (ShaderMakeBlob PUBLIC "include")
 target_compile_options (ShaderMakeBlob PRIVATE ${COMPILE_OPTIONS})
-set_property (TARGET ShaderMakeBlob PROPERTY FOLDER ShaderMake)
+set_target_properties (ShaderMakeBlob PROPERTIES 
+    FOLDER ShaderMake
+    POSITION_INDEPENDENT_CODE ON
+)
 
 # ShaderMake executable
 add_executable (ShaderMake
