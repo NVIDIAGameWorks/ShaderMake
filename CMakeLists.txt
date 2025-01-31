@@ -8,11 +8,13 @@ else ()
 endif ()
 
 # Cached
-if (NOT SHADERMAKE_IS_SUBMODULE)
+if (SHADERMAKE_IS_SUBMODULE)
+    set (SHADERMAKE_BIN_OUTPUT_PATH "" CACHE STRING "")
+else()
     set (CMAKE_CONFIGURATION_TYPES "Debug;Release" CACHE STRING "")
+    set (SHADERMAKE_BIN_OUTPUT_PATH "${CMAKE_SOURCE_DIR}/bin" CACHE STRING "")
 endif()
 
-set (SHADERMAKE_BIN_OUTPUT_PATH "${CMAKE_SOURCE_DIR}/bin" CACHE STRING "")
 set (SHADERMAKE_SEARCH_FOR_COMPILERS ${SHADERMAKE_IS_SUBMODULE} CACHE BOOL "Toggles whether to search for dxc.exe and fxc.exe")
 option (SHADERMAKE_FIND_FXC "Toggles whether to search for FXC" ON)
 option (SHADERMAKE_FIND_DXC "Toggles whether to search for DXC for DXIL" ON)
@@ -81,13 +83,19 @@ add_executable (ShaderMake
     src/ShaderMake.cpp 
 )
 target_compile_options (ShaderMake PRIVATE ${COMPILE_OPTIONS})
-set_target_properties (ShaderMake PROPERTIES
-    RUNTIME_OUTPUT_DIRECTORY                "${SHADERMAKE_BIN_OUTPUT_PATH}/$<CONFIG>"
-    RUNTIME_OUTPUT_DIRECTORY_DEBUG          "${SHADERMAKE_BIN_OUTPUT_PATH}/Debug"
-    RUNTIME_OUTPUT_DIRECTORY_MINSIZEREL     "${SHADERMAKE_BIN_OUTPUT_PATH}/MinSizeRel"
-    RUNTIME_OUTPUT_DIRECTORY_RELEASE        "${SHADERMAKE_BIN_OUTPUT_PATH}/Release"
-    RUNTIME_OUTPUT_DIRECTORY_RELWITHDEBINFO "${SHADERMAKE_BIN_OUTPUT_PATH}/RelWithDebInfo"
-)
+
+# Set the output paths if SHADERMAKE_BIN_OUTPUT_PATH is specified.
+# If not, use default CMake paths.
+if (SHADERMAKE_BIN_OUTPUT_PATH)
+    set_target_properties (ShaderMake PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY                "${SHADERMAKE_BIN_OUTPUT_PATH}/$<CONFIG>"
+        RUNTIME_OUTPUT_DIRECTORY_DEBUG          "${SHADERMAKE_BIN_OUTPUT_PATH}/Debug"
+        RUNTIME_OUTPUT_DIRECTORY_MINSIZEREL     "${SHADERMAKE_BIN_OUTPUT_PATH}/MinSizeRel"
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE        "${SHADERMAKE_BIN_OUTPUT_PATH}/Release"
+        RUNTIME_OUTPUT_DIRECTORY_RELWITHDEBINFO "${SHADERMAKE_BIN_OUTPUT_PATH}/RelWithDebInfo"
+    )
+endif()
+
 set_property (DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR} PROPERTY VS_STARTUP_PROJECT ShaderMake)
 set_property (TARGET ShaderMake PROPERTY FOLDER ShaderMake)
 target_link_libraries (ShaderMake ShaderMakeBlob)
